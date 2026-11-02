@@ -1,0 +1,2 @@
+placeholder: no embedded chdman/dolphin-tool built for this target yet.
+run "make tools" or see tools/vendor-build/ to build them, or install chdman/dolphin-tool on PATH.

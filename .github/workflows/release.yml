@@ -1,0 +1,69 @@
+# Builds the per-platform romctl release binaries, each embedding whatever
+# native tools (chdman, dolphin-tool) tools.yml managed to build for that
+# platform. A platform whose tools job failed still gets a romctl binary;
+# it just falls back to a PATH-installed chdman/dolphin-tool at runtime
+# (see internal/tools) instead of an embedded one.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  tools:
+    uses: ./.github/workflows/tools.yml
+
+  build:
+    needs: tools
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            artifact: tools-linux-amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            artifact: tools-linux-arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            artifact: tools-windows-amd64
+            ext: ".exe"
+          - goos: darwin
+            goarch: amd64
+            artifact: tools-darwin_amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            artifact: tools-darwin_arm64
+            ext: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch built native tools for this platform
+        uses: actions/download-artifact@v4
+        continue-on-error: true # a platform whose tools job failed just builds without them
+        with:
+          name: ${{ matrix.artifact }}
+          path: internal/tools/data/${{ matrix.goos }}_${{ matrix.goarch }}/
+
+      - name: Build romctl
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p build
+          go build -ldflags "-X github.com/demicloud/romctl/internal/version.Version=${GITHUB_REF_NAME}" \
+            -o build/romctl_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} ./cmd/romctl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: romctl_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: build/romctl_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }}

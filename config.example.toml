@@ -1,0 +1,36 @@
+# Example romctl config file.
+#
+# Copy to ${ROMCTL_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/romctl/config.toml}
+# and edit. Every key below is optional unless noted; uncomment and fill in
+# only what you need. See README.md's "Scraping" and "Syncing to a device"
+# sections for the full explanation of each.
+
+[sync]
+
+# Required for `sync`. The device's hostname or IP.
+#host = "host1.example.com"
+
+# Defaults to "deck", the standard Steam Deck/RetroDECK username.
+#user = "deck"
+
+# Library root on the device. Leave unset for a standard RetroDECK
+# install: romctl auto-discovers it (works whether it's on internal
+# storage or an SD card, and across the card moving to a different mount
+# point). Only set this for a non-RetroDECK setup or a customized
+# install location.
+#path = "/path/on/device/retrodeck"
+
+# Extra rsync exclude patterns, on top of the built-in ones (save/state
+# files, conversion leftovers, _to_delete/).
+#exclude = ["*.keep"]
+
+[scrape]
+
+# Required for `scrape`. Your personal ScreenScraper account.
+#user = "ssid:sspassword"
+
+# Leave unset and Skyscraper auto-detects your ScreenScraper account's
+# real thread allowance itself. Only set this to use fewer threads than
+# you're allowed; Skyscraper handles ScreenScraper's quota compliance
+# itself either way.
+#threads = 6

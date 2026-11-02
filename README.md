@@ -4,9 +4,11 @@ Audit and normalize a ROM library laid out for [RetroDECK](https://retrodeck.net
 (ES-DE directory names under `roms/`, emulator firmware under `bios/`).
 
 `romctl check` reports what is out of convention. The other commands fix it.
-Every fixing command is a **dry run unless `--apply` is given**, and nothing is
-deleted outright: replaced originals are moved to `<system>/_to_delete/` and
-removed later with `romctl clean`.
+Every fixing command **applies its changes by default**; pass `--dry-run` to
+preview instead. Nothing is deleted outright: replaced originals are moved to
+`<system>/_to_delete/` and removed later with `romctl clean` (which asks for
+confirmation first, since it's the one step that can't be undone). A run
+that retires anything prints a reminder of how many items are waiting.
 
 ## Contents
 
@@ -15,82 +17,95 @@ removed later with `romctl clean`.
 - [Library conventions](#library-conventions)
 - [BIOS and firmware](#bios-and-firmware)
 - [Emulator configuration notes](#emulator-configuration-notes)
+- [Scraping](#scraping)
 - [Syncing to a device](#syncing-to-a-device)
 - [Out of scope](#out-of-scope)
 - [License](#license)
 
 ## Requirements
 
+A single `romctl` binary for your platform (Linux, Windows or macOS) —
+nothing else to install for most commands. `check`, `bios`, `detag`,
+`unpack`, `m3u`, `n64`, `snes`, `clean` and `systems` are pure Go: archive
+handling, CSO decompression and ISO9660 reading/writing are built in. Four
+commands still shell out to an external tool: three for formats (CHD, RVZ
+and the Xbox XDVDFS disc format) complex and emulator-sensitive enough not
+to reimplement, one for scraping (a mature, already-compliant scraper not
+worth reimplementing against ScreenScraper's own quota/approval rules — see
+[Scraping](#scraping)):
+
 | Tool | Used by | Upstream |
 |---|---|---|
-| bash 4.4+, coreutils, `od`, `md5sum`, `perl` | all | base system |
-| `rsync`, `ssh` | `sync` | base system |
 | `chdman` | `chd`, `dvd` | [MAME](https://github.com/mamedev/mame) |
-| `maxcso` | `chd` (PSP `.cso`) | [maxcso](https://github.com/unknownbrackets/maxcso) |
-| `7z` | `unpack`, `chd` (archives), `ps3` | [7-Zip](https://github.com/ip7z/7zip) |
-| `makeps3iso` | `ps3` (ISO build) | [ps3iso-utils](https://github.com/bucanero/ps3iso-utils) |
 | `dolphin-tool` | `rvz` | [Dolphin](https://github.com/dolphin-emu/dolphin) |
+| `extract-xiso` | `xiso` (full/redump disc images only; renaming an already-valid XISO is pure Go) | [extract-xiso](https://github.com/XboxDev/extract-xiso) |
+| `skyscraper` | `scrape` | [Skyscraper](https://github.com/muldjord/skyscraper) |
 
-`check` and `bios` need only the base system; CHD, XISO and N64 headers are
-parsed directly. The external tools can come from distro packages or be built
-from source with the bundled Makefile.
+A release binary has these **embedded** for its platform and extracts them
+to a local cache on first use — nothing to build yourself. If a release
+doesn't carry one for your platform (see `make tools` below), romctl falls
+back to a copy on `PATH`.
 
-### Building the tools
+`sync` additionally needs `rsync` and `ssh` on `PATH` (on Windows: via WSL,
+MSYS2/Git for Windows, or similar — reimplementing the rsync protocol is out
+of scope).
 
-`make` fetches each tool at a pinned upstream release into `vendor/` and
-installs the binaries into `bin/`. romctl puts its own `bin/` first in `PATH`,
-so built tools take precedence over system copies (this also works when
-romctl is invoked through a symlink).
+### Building from source
 
 ```sh
-make                 # everything
-make chdman 7z       # selected tools
-make JOBS=8          # parallelism (default: nproc)
-make clean           # drop build output, keep sources
-make distclean       # drop sources too
+go build -o romctl ./cmd/romctl    # or: make build
+```
+
+### Building the embedded tools yourself
+
+Only needed if you're building a release, or your platform doesn't have one
+embedded. `make tools` fetches `chdman`, `dolphin-tool`, `extract-xiso` and
+`skyscraper` at a pinned upstream release and builds them for the host
+platform, staging them where the next `go build`/`make build` will embed
+them:
+
+```sh
+make tools                  # all four tools for the host platform
+make tools-windows-amd64    # cross-build chdman + extract-xiso for Windows via MinGW-w64
+make JOBS=8                 # parallelism (default: nproc)
+make clean                  # drop build output, keep fetched sources
+make distclean               # drop sources too
 ```
 
 Build dependencies: a C/C++ toolchain, GNU make, CMake, git, Python 3,
-pkg-config, and development headers for SDL2 (MAME's build configuration
-requires it even for tools-only builds), libuv, lz4 and zlib.
+pkg-config, development headers for SDL2 (MAME's build configuration
+requires it even for a tools-only build) and zlib, and Qt5 (`qmake`) for
+Skyscraper.
 
 ```sh
 # Fedora
-sudo dnf install gcc-c++ make cmake git python3 pkgconf-pkg-config \
-  SDL2-devel libuv-devel lz4-devel zlib-devel
+sudo dnf install gcc-c++ make cmake git python3 pkgconf-pkg-config SDL2-devel zlib-devel qt5-qtbase-devel
 # Debian/Ubuntu
-sudo apt install build-essential cmake git python3 pkg-config \
-  libsdl2-dev libuv1-dev liblz4-dev zlib1g-dev
+sudo apt install build-essential cmake git python3 pkg-config libsdl2-dev zlib1g-dev qtbase5-dev qt5-qmake qtbase5-dev-tools
 ```
 
 MAME and Dolphin are large; expect a first build to take a while. Build on a
 native Linux filesystem; building on a mounted Windows or network share is
-much slower.
-
-To run romctl from anywhere, symlink it into a directory on `PATH`:
-
-```sh
-ln -s "$PWD/romctl" ~/.local/bin/romctl
-romctl check -r /path/to/retrodeck
-```
-
-To update a tool, bump its `*_REF` in the Makefile and run
-`make distclean all`.
+much slower. To update a tool, bump its `*_REF` in the Makefile and run
+`make distclean tools`.
 
 ## Usage
 
 ```
-romctl COMMAND [SYSTEM...|all] [--apply] [-r ROOT]
+romctl COMMAND [SYSTEM...|all] [--dry-run] [-r ROOT]
 ```
 
-Options may appear anywhere on the command line. `ROOT` is the library root containing `roms/` and `bios/` (default: current
-directory). Systems are directory names under `roms/`; omit them or pass `all`
-for every system.
+Options may appear anywhere on the command line. `ROOT` is the library root
+containing `roms/` and `bios/` (default: current directory). Systems are
+directory names under `roms/`; omit them or pass `all` for every system.
+Every mutating command below applies its changes immediately; pass
+`--dry-run`/`-n` to preview instead.
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. |
+| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan. |
 | `bios` | Audit BIOS files only. |
+| `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
 | `detag` | Strip region/dump tags, move a leading article to the end, capitalize "- The". |
 | `unpack` | Extract single-file archives in cartridge systems. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. |
@@ -98,22 +113,27 @@ for every system.
 | `dvd` | Re-encode DVD images stored as CD-type CHDs (e.g. PS2) as DVD CHDs. |
 | `n64` | Normalize `.v64`/`.n64` byte orders to big-endian `.z64`. |
 | `snes` | Strip 512-byte copier headers; rename `.smc` to `.sfc`. |
-| `xiso` | Rename Xbox XISO images from `.iso` to `.xiso`. |
+| `xiso` | Convert Xbox disc images to XISO: rename an already-valid one, or rebuild a full/redump dump. |
 | `rvz` | Convert GameCube/Wii images to RVZ. |
 | `ps3` | Unpack PS3 archives into disc folders, then build ISOs from them. |
-| `clean` | Delete `_to_delete/` directories. |
-| `sync` | Mirror `roms/` and/or `bios/` to the device. See [Syncing to a device](#syncing-to-a-device). |
-| `systems` | List known systems and their classes. |
+| `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
+| `clean` | Permanently delete `_to_delete/` directories (asks for confirmation first). |
+| `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
+| `systems` | List every known system and its class, whether or not it's populated. |
 
 Typical session:
 
 ```bash
 romctl check                  # what's wrong
-romctl chd psx                # what would change
-romctl chd psx --apply        # change it
+romctl chd psx --dry-run      # what would change
+romctl chd psx                # change it
 romctl check psx              # confirm
-romctl clean psx --apply      # after testing the new files
+romctl clean psx              # after testing the new files (asks to confirm)
 ```
+
+Every suggested-fix hint in `check`'s output (and every example above) uses
+whatever command you actually typed to invoke romctl — `./romctl`, a bare
+`romctl` from `PATH`, or an absolute path — so it can be copy-pasted as-is.
 
 `check` output format: `LEVEL  system  file: message  [suggested command]`.
 
@@ -125,6 +145,15 @@ romctl clean psx --apply      # after testing the new files
 
 A run with no `FAIL` or `WARN` findings ends with `✓ Clean`. Color is used
 only on a terminal and honors `NO_COLOR`.
+
+`check --dupes` additionally scans each system for exact (byte-for-byte)
+duplicate files, flagging every copy after the first. This is off by
+default: unlike every other check, finding exact duplicates means reading
+every file's full content, which takes meaningfully longer on a library
+with large CHD/ISO files. It only catches true duplicates - a game present
+under two different region dumps (different hashes, same underlying game)
+isn't detected; doing that precisely needs No-Intro/Redump-style DAT
+clone-group data, which is out of scope for now.
 
 ## Library conventions
 
@@ -271,34 +300,143 @@ Check that the frontend actually exposes an Xbox 360 system before collecting
 games: every supported system gets a generated `systeminfo.txt` in its ROM
 directory.
 
+## Scraping
+
+`romctl scrape` fetches game metadata and media from ScreenScraper and
+writes it straight into `ES-DE/gamelists/<system>/gamelist.xml` and
+`ES-DE/downloaded_media/<system>/`, via an embedded
+[Skyscraper](https://github.com/muldjord/skyscraper). romctl never talks to
+a scraper API itself: Skyscraper's own ScreenScraper developer credentials
+are baked into it, so only your personal account is needed.
+
+```toml
+# In the config file (see Configuration below, or config.example.toml)
+[scrape]
+user = "ssid:sspassword"
+#threads = 6   # optional - see below
+```
+
+```sh
+romctl scrape --dry-run     # preview: which populated systems would be scraped
+romctl scrape               # scrape every populated system with a Skyscraper equivalent
+romctl scrape psx snes      # just these systems
+```
+
+Leave `threads` unset and Skyscraper auto-detects your ScreenScraper
+account's real thread allowance itself; only set it to use fewer threads
+than you're allowed. Skyscraper handles the rest of ScreenScraper's quota
+compliance itself too (backing off on rate limits, falling back to a single
+thread for an unregistered/invalid account), so romctl doesn't reimplement
+any of that.
+
+A system needs a `-p` platform Skyscraper actually supports; not every
+romctl system has one (original Xbox and PS3 aren't scraped by Skyscraper
+at all) - those are skipped with a clear message rather than guessed at.
+
+Multi-disc games (`Title.m3u/` directories) are scraped correctly as one
+game, not once per disc: Skyscraper has no native concept of "a directory
+is the game," so a regular directory scan would otherwise wander into
+`Title.m3u/` and scrape each disc file inside as its own unrelated game
+(duplicate entries, wasted ScreenScraper lookups). romctl scrapes each
+`Title.m3u/` game by its playlist file alone, in a separate pass, and
+corrects Skyscraper's resulting `<path>`/media naming to match the
+`Title.m3u.<ext>` convention afterward. Confirmed end-to-end against real
+ScreenScraper matches (both a regular single-file game and a multi-disc
+one), not just synthetic/unmatched data.
+
+**Known v1 gap**: romctl ships a minimal `artwork.xml` that gets
+`covers`/`screenshots`/`marquees`/`wheels` as raw, uncomposited images;
+manuals, videos and a few other media types ES-DE can use aren't wired up
+yet.
+
 ## Syncing to a device
 
 `romctl sync` mirrors the library to the device over SSH with `rsync --delete`,
 so files replaced or removed locally are removed on the device too. The local
-copy is the source of truth.
+copy is the source of truth. A third target, `media`, covers ES-DE's scraped
+data (`ES-DE/gamelists/` and `ES-DE/downloaded_media/`), which RetroDECK
+stores as a sibling of `roms/` and `bios/` under the same device path.
 
 ```bash
-romctl sync                 # dry run: roms/ and bios/; "*deleting" lines are removals
-romctl sync --apply         # do it
-romctl sync roms --apply    # one target only
+romctl sync --dry-run       # preview: roms/ and bios/; "*deleting" lines are removals
+romctl sync                 # do it
+romctl sync roms            # one target only
+romctl sync --pull          # initial population: pull roms/bios/media from the device
+romctl sync --pull media    # pull just one target, e.g. media you don't have locally yet
 ```
+
+`--pull` reverses direction (device → local) and never deletes locally, so
+it's safe to run anytime, including to populate a brand-new local working
+copy from an existing device. With no target named, a push defaults to
+`roms`/`bios` (pushing `media` is left explicit, see below); a pull
+defaults to all three, since a pull is usually "get me everything I don't
+have yet."
+
+### Keeping scraped data in sync
+
+Scraping can happen on-device in ES-DE, or locally via `romctl scrape` (see
+[Scraping](#scraping)) - either way, the intended workflow is:
+
+1. `romctl sync --pull media` to bring the device's `gamelist.xml` and
+   `downloaded_media/` down locally (or just `romctl sync --pull` if you
+   don't have a local working copy at all yet). Skip this if you're
+   scraping locally with `romctl scrape` instead of on-device.
+2. Run the normal normalization commands (`detag`, `chd`, `n64`, `snes`,
+   `xiso`, `rvz`, `m3u`). Any command that renames or converts a ROM that
+   was already scraped updates the matching `<path>` in `gamelist.xml` and
+   moves the corresponding media files automatically, so nothing is
+   orphaned. A ROM that hasn't been scraped yet is untouched (there's
+   nothing to update).
+3. `romctl sync` to push `roms/`/`bios/` back up (add `media` if you want
+   to push local gamelist/media edits back too - including anything
+   `romctl scrape` just wrote).
+
+This is pull-then-normalize-then-push by design: there's no automatic
+conflict detection between a local pull and new on-device scrapes, so
+pulling again before your next push is on you.
+
+The multi-disc (`Title.m3u/`) media-naming convention above (flat
+`Title.m3u.<ext>`, no subfolder) is confirmed against a real scraped
+library, across multiple systems and every media type ES-DE writes.
 
 ### Configuration
 
-`${ROMCTL_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/romctl/config}`, plain
-`KEY=value` lines (the file is parsed, never sourced):
+`${ROMCTL_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/romctl/config.toml}`, a
+TOML file (parsed, never sourced). See
+[config.example.toml](config.example.toml) for every key in one place,
+including `[scrape]` (see [Scraping](#scraping)):
 
-```ini
-SYNC_USER=deck
-SYNC_HOST=host1.example.com
-# Library root on the device (contains roms/ and bios/)
-SYNC_PATH=/path/on/device/retrodeck
-# Optional, repeatable: extra rsync exclude patterns
-SYNC_EXCLUDE=*.keep
+```toml
+[sync]
+host = "host1.example.com"
+exclude = ["*.keep"]   # optional, extra rsync exclude patterns
+```
+
+`host` is the only setting required. `user` defaults to `deck`, the
+standard Steam Deck/RetroDECK username, if not set. The device's library
+path is auto-discovered: romctl reads RetroDECK's own `retrodeck.json`
+over SSH (`paths.rd_home_path`) to find it, so it's correct whether the
+install lives on internal storage or an SD card, without any config —
+including across the card being moved to a different mount point. Set
+`path` only to skip that lookup, e.g. for a non-RetroDECK setup or a
+customized install location:
+
+```toml
+[sync]
+path = "/path/on/device/retrodeck"
 ```
 
 Authentication is plain SSH: set up a key and `~/.ssh/config` entry if you
-want, or type the password when prompted.
+want, or type the password when prompted. Without a key, `sync` still only
+prompts once per run: it opens a multiplexed SSH connection (OpenSSH
+`ControlMaster`) up front and reuses it for the `retrodeck.json` lookup and
+every target's rsync transfer. If that connection can't be established for
+any reason, each step just falls back to prompting on its own, same as
+before.
+
+If the card is mounted locally instead — plugged into the machine running
+romctl, not the device — skip `sync` entirely and just point `-r` at it
+directly.
 
 ### What is never synced or deleted
 
@@ -315,8 +453,9 @@ is both skipped and protected on the device:
 
 Notes:
 
-- Rescan in ES-DE after a sync. Renamed files or changed extensions appear as
-  new entries and need re-scraping.
+- A renamed/converted ROM that was already scraped keeps its metadata (see
+  [Keeping scraped data in sync](#keeping-scraped-data-in-sync)); a rescan is
+  only needed for genuinely new, never-scraped games.
 - The `-rlt` transfer mode (no owner/permission bits) suits filesystems
   without POSIX ownership on either side.
 
@@ -325,8 +464,6 @@ Notes:
 - **Dump verification.** `check` validates structure, not dump quality. Verify
   ROMs against No-Intro and Redump DATs with a ROM manager such as
   [Igir](https://igir.io/).
-- **Full Xbox images.** Rebuild them as XISO with `extract-xiso -r`; `check`
-  flags them.
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.
 

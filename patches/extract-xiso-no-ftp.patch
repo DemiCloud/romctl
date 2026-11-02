@@ -1,0 +1,49 @@
+diff --git a/extract-xiso.c b/extract-xiso.c
+index 4393fe3..d2e52af 100644
+--- a/extract-xiso.c
++++ b/extract-xiso.c
+@@ -264,23 +264,31 @@
+ 	#define FTP							void
+ 	#define STATUS						int
+ 	
+-	#define FtpBye( a )					do { } while ( 0 )
+-	#define FtpClose( a )				do { } while ( 0 )
+-	#define FtpBinary( a )				do { } while ( 0 )
+-	#define FtpChdir( a, b )			do { } while ( 0 )
+-	#define FtpMkdir( a, b )			do { } while ( 0 )
+-	#define FtpStatFree( a )			do { } while ( 0 )
+-	#define FtpStat( a, b, c )			do { } while ( 0 )
+-	#define FtpOpenRead( a, b )			do { } while ( 0 )
+-	#define FtpOpenWrite( a, b )		do { } while ( 0 )
+-	#define FtpReadBlock( a, b, c )		do { } while ( 0 )
+-	#define FtpWriteBlock( a, b, c )	do { } while ( 0 )
+-	#define FtpLogin( a, b, c, d, e )	do { } while ( 0 )
++	#define FtpBye( a )		( 0 )
++	#define FtpClose( a )		( 0 )
++	#define FtpBinary( a )		( 0 )
++	#define FtpChdir( a, b )		( 0 )
++	#define FtpMkdir( a, b )		( 0 )
++	#define FtpStatFree( a )		( 0 )
++	#define FtpStat( a, b, c )		( 0 )
++	#define FtpOpenRead( a, b )		( 0 )
++	#define FtpOpenWrite( a, b )		( 0 )
++	#define FtpReadBlock( a, b, c )		( 0 )
++	#define FtpWriteBlock( a, b, c )		( 0 )
++	#define FtpLogin( a, b, c, d, e )		( 0 )
+ #endif
+ 
+ #if defined( _WIN32 )
+ 	#include <direct.h>
+-	#include "win32/dirent.c"
++	#include <winsock2.h>
++	#if defined( __MINGW32__ )
++		// MinGW ships a real, POSIX-correct dirent.h; the bundled win32/
++		// dirent.c shim below is an MSVC-only compatibility layer (MSVC has
++		// no dirent.h at all) and has its own bugs under MinGW's CRT.
++		#include <dirent.h>
++	#else
++		#include "win32/dirent.c"
++	#endif
+ #else
+ 	#include <dirent.h>
+ 	#include <limits.h>

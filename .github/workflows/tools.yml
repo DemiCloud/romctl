@@ -1,0 +1,99 @@
+# Builds chdman, dolphin-tool and extract-xiso for each supported platform
+# and stages them into internal/tools/data/<goos>_<goarch>/ as workflow
+# artifacts, so release.yml can assemble per-platform romctl binaries that
+# embed them.
+#
+# Linux/amd64 and the Windows/amd64 cross-build (via a MinGW-w64 toolchain,
+# run on an ubuntu runner) are the two paths actually exercised during this
+# rewrite — chdman and extract-xiso on both; dolphin-tool is not (Dolphin's
+# own CMake is a much bigger lift to cross-build and hasn't been attempted).
+# linux/arm64 and both darwin targets are written in the same shape but NOT
+# verified here — dolphin-tool's own Linux build isn't fully verified
+# either (see AGENTS.md's native tool build status table), and there is no
+# macOS/arm64 hardware available to test against in this repository's dev
+# environment. Treat failures on those jobs as expected until someone with
+# access to that platform fixes them forward.
+name: Build native tools
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git python3 pkg-config \
+            libsdl2-dev zlib1g-dev
+      - name: Build chdman + dolphin-tool + extract-xiso
+        run: make tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-linux-amd64
+          path: internal/tools/data/linux_amd64/
+
+  windows-amd64-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 cmake git python3 pkg-config
+      - name: Fetch SDL2's official MinGW dev package
+        # SDL2 isn't packaged for mingw-w64 on Debian/Ubuntu; libsdl.org
+        # publishes a prebuilt dev tarball made exactly for cross-builds
+        # like this one. MAME's project generator needs the headers even
+        # for a tools-only (chdman) build.
+        run: |
+          curl -fsSL https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-devel-2.30.9-mingw.tar.gz \
+            | tar -xz -C /tmp
+          sudo cp -r /tmp/SDL2-2.30.9/x86_64-w64-mingw32/* /usr/x86_64-w64-mingw32/
+      - name: Build chdman + extract-xiso (Windows cross-build)
+        run: make tools-windows-amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-windows-amd64
+          path: internal/tools/data/windows_amd64/
+
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true # unverified platform; see file header
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git python3 pkg-config \
+            libsdl2-dev zlib1g-dev
+      - name: Build chdman + dolphin-tool + extract-xiso
+        run: make tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-linux-arm64
+          path: internal/tools/data/linux_arm64/
+
+  darwin:
+    strategy:
+      matrix:
+        include:
+          - os: macos-13 # Intel
+            dir: darwin_amd64
+          - os: macos-14 # Apple Silicon
+            dir: darwin_arm64
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true # unverified platform; see file header
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: brew install cmake sdl2
+      - name: Build chdman + dolphin-tool + extract-xiso
+        run: make tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.dir }}
+          path: internal/tools/data/${{ matrix.dir }}/
