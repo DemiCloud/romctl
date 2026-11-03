@@ -55,6 +55,9 @@ func Decompress(path string, out *os.File) error {
 	if magic != "CISO" && magic != "ZISO" {
 		return fmt.Errorf("%s: not a recognized CSO/ZSO image (magic %q)", path, magic)
 	}
+	if h.blockSize == 0 {
+		return fmt.Errorf("%s: invalid block size 0", path)
+	}
 
 	numBlocks := int(h.totalBytes / uint64(h.blockSize))
 	if h.totalBytes%uint64(h.blockSize) != 0 {
@@ -80,6 +83,9 @@ func Decompress(path string, out *os.File) error {
 		notCompressed := entry&notCompressedBit != 0
 		start := int64(entry&offsetMask) << h.align
 		end := int64(next&offsetMask) << h.align
+		if end < start {
+			return fmt.Errorf("%s: block %d: corrupt index (end %d before start %d)", path, i, end, start)
+		}
 
 		outLen := int64(h.blockSize)
 		if remaining < outLen {

@@ -90,3 +90,80 @@ func TestDecompress(t *testing.T) {
 		t.Fatalf("decompressed %d bytes, want %d bytes to match", len(got), len(plain))
 	}
 }
+
+// writeHeaderOnly writes a minimal CISO header (no index, no block data) so
+// a malformed-field test can control exactly one value in isolation.
+func writeHeaderOnly(t *testing.T, totalBytes uint64, blockSize uint32) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "malformed.cso")
+	header := make([]byte, 24)
+	copy(header[0:4], "CISO")
+	binary.LittleEndian.PutUint32(header[4:8], 24)
+	binary.LittleEndian.PutUint64(header[8:16], totalBytes)
+	binary.LittleEndian.PutUint32(header[16:20], blockSize)
+	header[20] = 1
+	header[21] = 0
+	if err := os.WriteFile(path, header, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestDecompressMalformedInputsReturnErrors confirms that corrupt/malicious
+// header and index fields produce a plain error rather than a panic
+// (division by zero on a zero block size, or a negative-length slice from
+// an index entry that runs backwards).
+func TestDecompressMalformedInputsReturnErrors(t *testing.T) {
+	t.Run("zero block size", func(t *testing.T) {
+		path := writeHeaderOnly(t, 100, 0)
+		out := mustCreateTemp(t)
+		if err := Decompress(path, out); err == nil {
+			t.Fatal("Decompress with blockSize=0: expected an error, got nil")
+		}
+	})
+
+	t.Run("not CISO/ZISO", func(t *testing.T) {
+		path := writeHeaderOnly(t, 100, 2048)
+		data, _ := os.ReadFile(path)
+		copy(data[0:4], "JUNK")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := mustCreateTemp(t)
+		if err := Decompress(path, out); err == nil {
+			t.Fatal("Decompress with bad magic: expected an error, got nil")
+		}
+	})
+
+	t.Run("index entry runs backwards", func(t *testing.T) {
+		// One block (totalBytes == blockSize) whose index has entry > next,
+		// so end-start underflows to a negative slice length.
+		path := writeHeaderOnly(t, 2048, 2048)
+		f, err := os.OpenFile(path, os.O_RDWR, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := make([]byte, 8)
+		binary.LittleEndian.PutUint32(index[0:4], 100) // entry
+		binary.LittleEndian.PutUint32(index[4:8], 50)  // next < entry
+		if _, err := f.WriteAt(index, 24); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+
+		out := mustCreateTemp(t)
+		if err := Decompress(path, out); err == nil {
+			t.Fatal("Decompress with a backwards index entry: expected an error, got nil")
+		}
+	})
+}
+
+func mustCreateTemp(t *testing.T) *os.File {
+	t.Helper()
+	out, err := os.Create(filepath.Join(t.TempDir(), "out.iso"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.Close() })
+	return out
+}
