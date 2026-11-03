@@ -20,7 +20,7 @@ import (
 )
 
 var mutatingCommands = map[string]bool{
-	"detag": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
+	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
 	"scrape": true,
 }
@@ -96,6 +96,11 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
 		return 1
 	}
+	scheme, err := actions.ParseScheme(cfg.Naming.Scheme)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
+		return 1
+	}
 
 	if cmd == "sync" {
 		return runSync(lib, *dryRun, *pull, cfg, sysArgs)
@@ -116,7 +121,7 @@ func run(args []string) int {
 		return 1
 	}
 
-	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun}, systems, *assumeYes, *showGames, *dupes, cfg)
+	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun}, systems, *assumeYes, *showGames, *dupes, scheme, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s: %v\n", cliutil.ProgName(), cmd, err)
 		return 1
@@ -132,20 +137,20 @@ func run(args []string) int {
 	return 0
 }
 
-func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes bool, cfg config.Config) (bool, error) {
+func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes bool, scheme actions.Scheme, cfg config.Config) (bool, error) {
 	switch cmd {
 	case "check":
-		return commands.Check(lib, systems, dupes)
+		return commands.Check(lib, systems, dupes, scheme)
 	case "bios":
 		return commands.Bios(lib, systems)
 	case "list":
 		return true, commands.List(lib, systems, showGames)
-	case "detag":
-		return true, commands.Detag(lib, runner, systems)
+	case "rename":
+		return true, commands.Rename(lib, runner, systems, scheme)
 	case "unpack":
 		return commands.Unpack(lib, runner, systems)
 	case "chd":
-		return commands.CHD(lib, runner, systems)
+		return commands.CHD(lib, runner, systems, scheme)
 	case "m3u":
 		return true, commands.M3U(lib, runner, systems)
 	case "dvd":
@@ -159,7 +164,7 @@ func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems 
 	case "rvz":
 		return commands.RVZ(lib, runner, systems)
 	case "ps3":
-		return commands.PS3(lib, runner, systems)
+		return commands.PS3(lib, runner, systems, scheme)
 	case "clean":
 		return true, commands.Clean(lib, runner, systems, assumeYes)
 	case "scrape":
@@ -198,7 +203,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "list", "detag", "unpack", "chd", "m3u", "dvd", "n64",
+	"check", "bios", "list", "rename", "unpack", "chd", "m3u", "dvd", "n64",
 	"snes", "xiso", "rvz", "ps3", "scrape", "clean", "sync", "systems",
 }
 
@@ -206,7 +211,7 @@ var commandTable = map[string]cmdInfo{
 	"check":   {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes}},
 	"bios":    {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
 	"list":    {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
-	"detag":   {"strip region/dump tags; move leading articles to the end", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
+	"rename":  {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"unpack":  {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"chd":     {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"m3u":     {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},

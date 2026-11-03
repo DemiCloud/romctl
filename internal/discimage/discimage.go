@@ -63,8 +63,10 @@ func SpecFor(class systemdb.Class) (Spec, bool) {
 
 // UnpackArchives extracts every .7z/.zip/.rar archive directly under
 // sysDir whose contents match spec into a FolderSuffix-named staging
-// directory, retiring the archive on success.
-func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger) error {
+// directory, retiring the archive on success. scheme (`[naming] scheme`)
+// controls how the archive's region/dump tags end up in the staging
+// directory's name; see internal/actions.ApplyScheme.
+func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger, scheme actions.Scheme) error {
 	entries, err := os.ReadDir(sysDir)
 	if err != nil {
 		return nil
@@ -79,7 +81,7 @@ func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *
 			continue
 		}
 		archivePath := filepath.Join(sysDir, e.Name())
-		title := actions.CleanName(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())))
+		title := actions.ApplyScheme(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())), scheme)
 		dst := filepath.Join(sysDir, title+spec.FolderSuffix)
 		if exists(dst) || exists(filepath.Join(sysDir, title+".iso")) {
 			continue

@@ -70,6 +70,19 @@ threads = 6
 	}
 }
 
+func TestLoadNamingConfig(t *testing.T) {
+	path := writeConfig(t, `[naming]
+scheme = "redump"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Naming.Scheme != "redump" {
+		t.Errorf("Naming.Scheme = %q, want %q", cfg.Naming.Scheme, "redump")
+	}
+}
+
 func TestLoadUnknownKey(t *testing.T) {
 	path := writeConfig(t, `[sync]
 nonsense = 1

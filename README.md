@@ -25,7 +25,7 @@ that retires anything prints a reminder of how many items are waiting.
 ## Requirements
 
 A single `romctl` binary for your platform (Linux, Windows or macOS) —
-nothing else to install for most commands. `check`, `bios`, `detag`,
+nothing else to install for most commands. `check`, `bios`, `rename`,
 `unpack`, `m3u`, `n64`, `snes`, `clean` and `systems` are pure Go: archive
 handling, CSO decompression and ISO9660 reading/writing are built in. Four
 commands still shell out to an external tool: three for formats (CHD, RVZ
@@ -45,6 +45,14 @@ A release binary has these **embedded** for its platform and extracts them
 to a local cache on first use — nothing to build yourself. If a release
 doesn't carry one for your platform (see `make tools` below), romctl falls
 back to a copy on `PATH`.
+
+Release binaries aren't code-signed. On macOS, a binary downloaded from a
+browser is quarantined and Gatekeeper will refuse to run it ("cannot be
+opened because it is from an unidentified developer", or "is damaged and
+can't be opened" on newer macOS); clear the quarantine flag with
+`xattr -d com.apple.quarantine ./romctl` before running it. On Windows,
+SmartScreen may warn about an unrecognized app; choose "More info" ->
+"Run anyway".
 
 `sync` additionally needs `rsync` and `ssh` on `PATH` (on Windows: via WSL,
 MSYS2/Git for Windows, or similar — reimplementing the rsync protocol is out
@@ -106,7 +114,7 @@ Every mutating command below applies its changes immediately; pass
 | `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan. |
 | `bios` | Audit BIOS files only. |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
-| `detag` | Strip region/dump tags, move a leading article to the end, capitalize "- The". |
+| `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge systems. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. |
 | `m3u` | Group loose `Title (Disc N).chd` files into `Title.m3u/`. |
@@ -176,14 +184,33 @@ Disc numbers are zero-padded so they sort correctly.
 
 ### Naming
 
-- No region or dump tags: `Sonic CD`, not `Sonic CD (USA) [!]`.
-- `(Disc N)` is the only tag kept, and only inside `.m3u` directories.
+How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit treat
+region/dump tags depends on `[naming] scheme` in the config file (see
+[Configuration](#configuration)):
+
+| `scheme` | Behavior |
+|---|---|
+| `notag` (default) | One definitive version per game, no tags: `Sonic CD`, not `Sonic CD (USA) [!]`. `(Disc N)` is the only tag kept, and only inside `.m3u` directories. |
+| `keep` | Leave names exactly as found; `rename` becomes a no-op. |
+| `no-intro` | Reorder recognized `Region`/`Rev N` tags into [No-Intro's](https://wiki.no-intro.org/index.php?title=Naming_Convention) own order: `Super Mario World (Japan) (Rev 1)`. |
+| `redump` | Reorder recognized `Region`/`Disc N`/`Rev N` tags into [Redump's](http://redump.org/) own order: `Final Fantasy VII (USA) (Disc 1)`. |
+
+`no-intro` and `redump` only reorder what's already in the filename -
+romctl has no DAT data to check against (see
+[Out of scope](#out-of-scope)), so anything they don't recognize (language
+lists, `Beta`/`Proto`/`Unl` flags, bad-dump markers, ...) is left as found
+rather than guessed at, appended after the reordered tags.
+
+Independent of `scheme`:
+
 - Leading articles move to the end of the title segment:
-  `Legend of Zelda, The - The Minish Cap`.
+  `Legend of Zelda, The - The Minish Cap` (skipped entirely under `keep`).
 - Sidecar files (`.ips`, `.sbi`, `.cheats`) share the ROM's base name and are
   renamed with it.
 - Arcade systems are never renamed: filenames are set names that the
   emulator resolves.
+- romctl never picks one region's dump over another on your behalf; see
+  [Out of scope](#out-of-scope).
 
 ### Formats by system
 
@@ -381,7 +408,7 @@ Scraping can happen on-device in ES-DE, or locally via `romctl scrape` (see
    `downloaded_media/` down locally (or just `romctl sync --pull` if you
    don't have a local working copy at all yet). Skip this if you're
    scraping locally with `romctl scrape` instead of on-device.
-2. Run the normal normalization commands (`detag`, `chd`, `n64`, `snes`,
+2. Run the normal normalization commands (`rename`, `chd`, `n64`, `snes`,
    `xiso`, `rvz`, `m3u`). Any command that renames or converts a ROM that
    was already scraped updates the matching `<path>` in `gamelist.xml` and
    moves the corresponding media files automatically, so nothing is
@@ -404,7 +431,8 @@ library, across multiple systems and every media type ES-DE writes.
 `${ROMCTL_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/romctl/config.toml}`, a
 TOML file (parsed, never sourced). See
 [config.example.toml](config.example.toml) for every key in one place,
-including `[scrape]` (see [Scraping](#scraping)):
+including `[scrape]` (see [Scraping](#scraping)) and `[naming]` (see
+[Naming](#naming)):
 
 ```toml
 [sync]
@@ -466,9 +494,15 @@ Notes:
   [Igir](https://igir.io/).
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.
+- **Picking one region's dump over another.** `--dupes` only catches
+  byte-for-byte identical files; it doesn't single out one region's dump
+  of the same game, which needs No-Intro/Redump-style clone-group data.
+  That's on you, same as naming tags - see [Naming](#naming).
 
 ## License
 
 romctl is licensed under the GNU General Public License v3.0 or later; see
 [LICENSE](LICENSE). Tools built by the Makefile are fetched from their upstream
-projects and remain under their own licenses.
+projects and remain under their own licenses; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for what those are and
+why embedding them is GPL-compatible.

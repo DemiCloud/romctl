@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Sync   SyncConfig   `toml:"sync"`
 	Scrape ScrapeConfig `toml:"scrape"`
+	Naming NamingConfig `toml:"naming"`
 }
 
 // SyncConfig holds the `sync` table.
@@ -28,6 +29,19 @@ type SyncConfig struct {
 type ScrapeConfig struct {
 	User    string `toml:"user"`    // ScreenScraper personal account, "ssid:sspassword" (see internal/commands's Scrape)
 	Threads int    `toml:"threads"` // 0 means let Skyscraper auto-detect the account's real allowance (see internal/commands's Scrape)
+}
+
+// NamingConfig holds the `naming` table.
+type NamingConfig struct {
+	// Scheme selects how `rename`, CHD/PS3 conversion output naming, and
+	// check's naming audit treat region/dump tags - one of "notag"
+	// (default: romctl's original single-definitive-version-per-game
+	// naming), "keep" (leave names exactly as found), "no-intro", or
+	// "redump" (reorder recognized Region/Disc N/Rev N tags into that
+	// scheme's own order; see internal/actions.ApplyScheme and README.md's
+	// Naming section). Validated with actions.ParseScheme, not here -
+	// config.Load doesn't otherwise check field values, only unknown keys.
+	Scheme string `toml:"scheme"`
 }
 
 // DefaultPath returns the config file path: $ROMCTL_CONFIG, or

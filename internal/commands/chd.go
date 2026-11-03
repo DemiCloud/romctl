@@ -20,8 +20,10 @@ import (
 
 // CHD converts game directories, archives and loose .cue/.gdi/.iso/.cso
 // files to CHD for every CD/DVD/UMD-class system given. Multi-disc games
-// become a Title.m3u/ directory.
-func CHD(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
+// become a Title.m3u/ directory. scheme (`[naming] scheme`) controls how
+// the source's region/dump tags end up in the resulting filename; see
+// internal/actions.ApplyScheme.
+func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	log := cliutil.NewLogger("chd")
 	converted, skipped, failed := 0, 0, 0
 
@@ -43,14 +45,14 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 				continue
 			}
 			path := filepath.Join(sysDir, base)
-			title := actions.CleanName(strings.TrimSuffix(base, filepath.Ext(base)))
+			title := actions.ApplyScheme(strings.TrimSuffix(base, filepath.Ext(base)), scheme)
 			info, err := os.Stat(path)
 			if err != nil {
 				continue
 			}
 
 			if info.IsDir() {
-				title = actions.CleanName(base)
+				title = actions.ApplyScheme(base, scheme)
 				if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
 					continue
 				}

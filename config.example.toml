@@ -34,3 +34,20 @@
 # you're allowed; Skyscraper handles ScreenScraper's quota compliance
 # itself either way.
 #threads = 6
+
+[naming]
+
+# How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit
+# treat region/dump tags. One of:
+#   notag     (default) strip to one definitive name per game, e.g.
+#             "Sonic CD", not "Sonic CD (USA) [!]".
+#   keep      leave names exactly as found; `rename` becomes a no-op.
+#   no-intro  reorder recognized Region/Rev N tags into No-Intro's own
+#             order, e.g. "Super Mario World (Japan) (Rev 1)".
+#   redump    reorder recognized Region/Disc N/Rev N tags into Redump's
+#             own order, e.g. "Final Fantasy VII (USA) (Disc 1)".
+# no-intro/redump only reorder tags already present - romctl has no DAT
+# data to check against, so anything else found (language lists, Beta/
+# Proto/Unl flags, bad-dump markers, ...) is left as found. See README.md's
+# Naming section.
+#scheme = "notag"

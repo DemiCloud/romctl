@@ -24,14 +24,17 @@ import (
 // prints the FAIL/WARN/INFO findings and a colorized summary, and reports
 // whether anything FAILed. dupes additionally scans each system for exact
 // (byte-for-byte) duplicate files - off by default since, unlike every
-// other check, it has to read every file's full content.
-func Check(lib *library.Library, systems []string, dupes bool) (bool, error) {
+// other check, it has to read every file's full content. scheme
+// (`[naming] scheme`) is the naming-audit category's yardstick: a name
+// internal/actions.ApplyScheme wouldn't change for the configured scheme
+// isn't a finding.
+func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme) (bool, error) {
 	report := audit.New(os.Stdout)
 	if dupes {
 		report.EnableDuplicates()
 	}
 	for _, sys := range systems {
-		checkSystem(report, lib, sys)
+		checkSystem(report, lib, sys, scheme)
 		if dupes {
 			checkDuplicates(report, sys, filepath.Join(lib.Roms, sys))
 		}
@@ -54,7 +57,7 @@ func Bios(lib *library.Library, systems []string) (bool, error) {
 	return !report.Failed(), nil
 }
 
-func checkSystem(report *audit.Report, lib *library.Library, sys string) {
+func checkSystem(report *audit.Report, lib *library.Library, sys string, scheme actions.Scheme) {
 	class := systemdb.ClassOf(sys)
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)
@@ -70,7 +73,7 @@ func checkSystem(report *audit.Report, lib *library.Library, sys string) {
 		if e.IsDir() {
 			checkDir(report, sys, class, path)
 		} else {
-			checkFile(report, sys, class, path)
+			checkFile(report, sys, class, path, scheme)
 		}
 	}
 }
@@ -139,7 +142,7 @@ func checkM3uDir(report *audit.Report, sys, dirPath string) {
 
 var discTagRE = regexp.MustCompile(`\(Disc \d+\)`)
 
-func checkFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
+func checkFile(report *audit.Report, sys string, class systemdb.Class, filePath string, scheme actions.Scheme) {
 	base := filepath.Base(filePath)
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
 	name := strings.TrimSuffix(base, filepath.Ext(base))
@@ -163,9 +166,8 @@ func checkFile(report *audit.Report, sys string, class systemdb.Class, filePath 
 	}
 
 	if class != systemdb.ClassArcade {
-		clean := actions.CleanName(name)
-		if clean != name {
-			report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+"."+ext), "detag")
+		if clean := actions.ApplyScheme(name, scheme); clean != name {
+			report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+"."+ext), "rename")
 		}
 		if discTagRE.MatchString(name) {
 			report.Add(audit.Warn, audit.CategoryStructure, sys, base,

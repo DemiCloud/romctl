@@ -14,8 +14,10 @@ import (
 // from each one. PS3 is the only class that goes through plain
 // ISO9660 (internal/discimage) instead of CHD, because RPCS3 doesn't read
 // CHD at all; a future system needing the same treatment is a new entry
-// in internal/discimage's Spec table, not a new command.
-func PS3(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
+// in internal/discimage's Spec table, not a new command. scheme
+// (`[naming] scheme`) controls how region/dump tags end up in the
+// resulting ISO's name; see internal/actions.ApplyScheme.
+func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	log := cliutil.NewLogger("ps3")
 	failed := false
 	for _, sys := range systems {
@@ -24,7 +26,7 @@ func PS3(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 			continue
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
-		if err := discimage.UnpackArchives(sysDir, sys, spec, runner, log); err != nil {
+		if err := discimage.UnpackArchives(sysDir, sys, spec, runner, log, scheme); err != nil {
 			failed = true
 		}
 		if err := discimage.BuildISOs(sysDir, sys, spec, runner, log); err != nil {

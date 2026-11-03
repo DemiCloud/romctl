@@ -12,11 +12,11 @@ import (
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
-// Detag strips region/dump tags and moves a leading article to the end of
-// the title for every loose file in the given systems (arcade systems are
-// skipped: their filenames are emulator-resolved set names).
-func Detag(lib *library.Library, runner *actions.Runner, systems []string) error {
-	log := cliutil.NewLogger("detag")
+// Rename applies scheme (`[naming] scheme` in config) to every loose file
+// in the given systems (arcade systems are skipped: their filenames are
+// emulator-resolved set names). See internal/actions.ApplyScheme.
+func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
+	log := cliutil.NewLogger("rename")
 	for _, sys := range systems {
 		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
 			continue
@@ -36,7 +36,7 @@ func Detag(lib *library.Library, runner *actions.Runner, systems []string) error
 			}
 			ext := filepath.Ext(base)
 			name := strings.TrimSuffix(base, ext)
-			clean := actions.CleanName(name)
+			clean := actions.ApplyScheme(name, scheme)
 			if clean == name {
 				continue
 			}
