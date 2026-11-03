@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git python3 pkg-config \
-            libsdl2-dev zlib1g-dev
+            libsdl2-dev libsdl2-ttf-dev zlib1g-dev
       - name: Build chdman + dolphin-tool + extract-xiso
         run: make tools
       - uses: actions/upload-artifact@v4
@@ -43,7 +43,7 @@ jobs:
       - name: Install MinGW-w64 cross toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64 cmake git python3 pkg-config
+          sudo apt-get install -y mingw-w64 cmake git python3 pkg-config libz-mingw-w64-dev
       - name: Fetch SDL2's official MinGW dev package
         # SDL2 isn't packaged for mingw-w64 on Debian/Ubuntu; libsdl.org
         # publishes a prebuilt dev tarball made exactly for cross-builds
@@ -69,7 +69,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git python3 pkg-config \
-            libsdl2-dev zlib1g-dev
+            libsdl2-dev libsdl2-ttf-dev zlib1g-dev
       - name: Build chdman + dolphin-tool + extract-xiso
         run: make tools
       - uses: actions/upload-artifact@v4
@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
-        run: brew install cmake sdl2
+        run: brew install cmake sdl2 sdl2_ttf
       - name: Build chdman + dolphin-tool + extract-xiso
         run: make tools
       - uses: actions/upload-artifact@v4
