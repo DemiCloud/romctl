@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git python3 pkg-config \
-            libsdl2-dev libsdl2-ttf-dev zlib1g-dev
+            libsdl2-dev libsdl2-ttf-dev libfontconfig1-dev zlib1g-dev
       - name: Build chdman + dolphin-tool + extract-xiso
         run: make tools
       - uses: actions/upload-artifact@v4
@@ -44,6 +44,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y mingw-w64 cmake git python3 pkg-config libz-mingw-w64-dev
+          # Ubuntu's mingw-w64 defaults to the win32 threading model, whose
+          # gcc doesn't implement the pthread-based condvars <mutex>/
+          # <condition_variable> need; MAME's netlist code uses
+          # std::condition_variable even in a tools-only build. Switch to
+          # the posix-threading alternative instead.
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
       - name: Fetch SDL2's official MinGW dev package
         # SDL2 isn't packaged for mingw-w64 on Debian/Ubuntu; libsdl.org
         # publishes a prebuilt dev tarball made exactly for cross-builds
@@ -69,7 +76,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git python3 pkg-config \
-            libsdl2-dev libsdl2-ttf-dev zlib1g-dev
+            libsdl2-dev libsdl2-ttf-dev libfontconfig1-dev zlib1g-dev
       - name: Build chdman + dolphin-tool + extract-xiso
         run: make tools
       - uses: actions/upload-artifact@v4
