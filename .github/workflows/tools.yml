@@ -13,11 +13,30 @@
 # macOS/arm64 hardware available to test against in this repository's dev
 # environment. Treat failures on those jobs as expected until someone with
 # access to that platform fixes them forward.
+#
+# darwin is excluded by default when this workflow is called from
+# release.yml (include_darwin defaults to false there): GitHub's hosted
+# macOS runners have gone into multi-hour, occasionally 24h+ (GitHub's own
+# hard queued-job cap) capacity queues, which would otherwise stall the
+# whole release. release.yml's build job already builds a working darwin
+# binary without an embedded tools artifact (see its own header comment),
+# so nothing is lost by skipping it there. Run this workflow directly via
+# workflow_dispatch (include_darwin defaults to true there) to verify the
+# darwin builds on demand.
 name: Build native tools
 
 on:
   workflow_dispatch:
+    inputs:
+      include_darwin:
+        description: Also attempt the darwin (macOS) builds
+        type: boolean
+        default: true
   workflow_call:
+    inputs:
+      include_darwin:
+        type: boolean
+        default: false
 
 jobs:
   linux-amd64:
@@ -95,6 +114,7 @@ jobs:
           - os: macos-14 # Apple Silicon
             dir: darwin_arm64
     runs-on: ${{ matrix.os }}
+    if: ${{ inputs.include_darwin }}
     continue-on-error: true # unverified platform; see file header
     steps:
       - uses: actions/checkout@v4
