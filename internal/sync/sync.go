@@ -81,7 +81,7 @@ func Run(opts Options) error {
 		}
 	}
 	if opts.Config.Sync.Host == "" {
-		return fmt.Errorf("set [sync] host in the config file (see --help)")
+		return fmt.Errorf("set [sync] host in the config file, or pass --sync-host (see --help)")
 	}
 	user := opts.Config.Sync.User
 	if user == "" {

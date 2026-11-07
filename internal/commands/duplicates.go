@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/audit"
+	"github.com/demicloud/romctl/internal/cliutil"
 )
 
 // checkDuplicates finds files in sysDir with identical content (exact
@@ -29,17 +31,28 @@ func checkDuplicates(report *audit.Report, sys, sysDir string) {
 		return
 	}
 
-	byHash := map[uint32][]string{}
+	var names []string
 	for _, e := range entries {
 		if e.IsDir() || !hashable(e.Name()) {
 			continue
 		}
-		sum, err := crc32File(filepath.Join(sysDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		byHash[sum] = append(byHash[sum], e.Name())
+		names = append(names, e.Name())
 	}
+
+	// Hashing full file contents is the expensive part of --dupes (the
+	// whole reason it's opt-in) - do it across a worker pool instead of
+	// one file at a time.
+	var mu sync.Mutex
+	byHash := map[uint32][]string{}
+	cliutil.Parallel(names, func(name string) {
+		sum, err := crc32File(filepath.Join(sysDir, name))
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		byHash[sum] = append(byHash[sum], name)
+		mu.Unlock()
+	})
 
 	hashes := make([]uint32, 0, len(byHash))
 	for h := range byHash {

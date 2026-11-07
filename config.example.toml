@@ -2,8 +2,12 @@
 #
 # Copy to ${ROMCTL_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/romctl/config.toml}
 # and edit. Every key below is optional unless noted; uncomment and fill in
-# only what you need. See README.md's "Scraping" and "Syncing to a device"
-# sections for the full explanation of each.
+# only what you need. This file is itself entirely optional - every key
+# here also has a CLI flag (e.g. --sync-host, --scrape-user, --scheme; see
+# `romctl --help`), so a config-free setup works too. A flag always wins
+# over the matching config value when both are set. See README.md's
+# "Scraping" and "Syncing to a device" sections for the full explanation
+# of each.
 
 [library]
 
@@ -15,41 +19,45 @@
 
 [sync]
 
-# Required for `sync`. The device's hostname or IP.
+# Required for `sync` (here or via --sync-host). The device's hostname or IP.
 #host = "host1.example.com"
 
-# Defaults to "deck", the standard Steam Deck/RetroDECK username.
+# Defaults to "deck", the standard Steam Deck/RetroDECK username. Also
+# settable with --sync-user.
 #user = "deck"
 
 # Library root on the device. Leave unset for a standard RetroDECK
 # install: romctl auto-discovers it (works whether it's on internal
 # storage or an SD card, and across the card moving to a different mount
 # point). Only set this for a non-RetroDECK setup or a customized
-# install location.
+# install location. Also settable with --sync-path.
 #path = "/path/on/device/retrodeck"
 
 # Extra rsync exclude patterns, on top of the built-in ones (save/state
-# files, conversion leftovers, _to_delete/).
+# files, conversion leftovers, _to_delete/). Also settable (repeatably)
+# with --sync-exclude.
 #exclude = ["*.keep"]
 
 [scrape]
 
-# Required for `scrape`. Your personal ScreenScraper account.
+# Required for `scrape` (here or via --scrape-user). Your personal
+# ScreenScraper account.
 #user = "ssid:sspassword"
 
 # Leave unset and Skyscraper auto-detects your ScreenScraper account's
-# real thread allowance itself. Only set this to use fewer threads than
-# you're allowed; Skyscraper handles ScreenScraper's quota compliance
-# itself either way.
+# real thread allowance itself. Only set this (or pass --scrape-threads)
+# to use fewer threads than you're allowed; Skyscraper handles
+# ScreenScraper's quota compliance itself either way.
 #threads = 6
 
 [naming]
 
 # How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit
-# treat region/dump tags. One of:
-#   notag     (default) strip to one definitive name per game, e.g.
-#             "Sonic CD", not "Sonic CD (USA) [!]".
-#   keep      leave names exactly as found; `rename` becomes a no-op.
+# treat region/dump tags. Also settable with --scheme. One of:
+#   keep      (default) leave names exactly as found; `rename` becomes a
+#             no-op. romctl never rewrites your naming unless asked to.
+#   notag     strip to one definitive name per game, e.g. "Sonic CD", not
+#             "Sonic CD (USA) [!]".
 #   no-intro  reorder recognized Region/Rev N tags into No-Intro's own
 #             order, e.g. "Super Mario World (Japan) (Rev 1)".
 #   redump    reorder recognized Region/Disc N/Rev N tags into Redump's
@@ -58,4 +66,4 @@
 # data to check against, so anything else found (language lists, Beta/
 # Proto/Unl flags, bad-dump markers, ...) is left as found. See README.md's
 # Naming section.
-#scheme = "notag"
+#scheme = "keep"

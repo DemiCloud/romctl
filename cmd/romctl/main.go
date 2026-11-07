@@ -44,7 +44,15 @@ func run(args []string) int {
 	assumeYes := fs.Bool("yes", false, "")
 	showGames := fs.BoolP("games", "g", false, "")
 	dupes := fs.Bool("dupes", false, "")
+	verbose := fs.BoolP("verbose", "v", false, "")
 	pull := fs.Bool("pull", false, "")
+	schemeFlag := fs.String("scheme", "", "")
+	syncHost := fs.String("sync-host", "", "")
+	syncUser := fs.String("sync-user", "", "")
+	syncPath := fs.String("sync-path", "", "")
+	syncExclude := fs.StringArray("sync-exclude", nil, "")
+	scrapeUser := fs.String("scrape-user", "", "")
+	scrapeThreads := fs.Int("scrape-threads", 0, "")
 	help := fs.BoolP("help", "h", false, "")
 	showVersion := fs.Bool("version", false, "")
 
@@ -95,9 +103,38 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
 		return 1
 	}
-	lib := library.Open(resolveRoot(*root, fs.Changed("root"), cfg.Library.Root))
+	rootChanged := fs.Changed("root")
+	lib := library.Open(resolveRoot(*root, rootChanged, cfg.Library.Root))
+	rootHint := ""
+	if rootChanged {
+		rootHint = "-r " + *root
+	}
 
-	scheme, err := actions.ParseScheme(cfg.Naming.Scheme)
+	// Every [sync]/[scrape]/[naming] config value also has a flag, so the
+	// config file is never required - an explicit flag always wins.
+	if fs.Changed("sync-host") {
+		cfg.Sync.Host = *syncHost
+	}
+	if fs.Changed("sync-user") {
+		cfg.Sync.User = *syncUser
+	}
+	if fs.Changed("sync-path") {
+		cfg.Sync.Path = *syncPath
+	}
+	if fs.Changed("sync-exclude") {
+		cfg.Sync.Exclude = *syncExclude
+	}
+	if fs.Changed("scrape-user") {
+		cfg.Scrape.User = *scrapeUser
+	}
+	if fs.Changed("scrape-threads") {
+		cfg.Scrape.Threads = *scrapeThreads
+	}
+	schemeStr := cfg.Naming.Scheme
+	if fs.Changed("scheme") {
+		schemeStr = *schemeFlag
+	}
+	scheme, err := actions.ParseScheme(schemeStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
 		return 1
@@ -122,7 +159,7 @@ func run(args []string) int {
 		return 1
 	}
 
-	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun}, systems, *assumeYes, *showGames, *dupes, scheme, cfg)
+	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun}, systems, *assumeYes, *showGames, *dupes, *verbose, rootHint, scheme, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s: %v\n", cliutil.ProgName(), cmd, err)
 		return 1
@@ -165,10 +202,10 @@ func resolveRoot(flagRoot string, flagChanged bool, cfgRoot string) string {
 	return flagRoot
 }
 
-func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes bool, scheme actions.Scheme, cfg config.Config) (bool, error) {
+func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes, verbose bool, rootHint string, scheme actions.Scheme, cfg config.Config) (bool, error) {
 	switch cmd {
 	case "check":
-		return commands.Check(lib, systems, dupes, scheme)
+		return commands.Check(lib, systems, dupes, scheme, verbose, rootHint)
 	case "bios":
 		return commands.Bios(lib, systems)
 	case "list":
@@ -212,14 +249,22 @@ func runSync(lib *library.Library, dryRun, pull bool, cfg config.Config, targets
 // Flag lines shared between the global usage and per-command help, kept
 // in one place so they can't drift apart.
 const (
-	flagRoot    = "  -r, --root DIR   library root containing roms/ and bios/ (default: local RetroDECK install, else .)"
-	flagDryRun  = "  -n, --dry-run    preview changes instead of making them (default: apply)"
-	flagGames   = "  -g, --games      also print each game's title"
-	flagDupes   = "      --dupes      with check, also scan for exact duplicate files"
-	flagYes     = "      --yes        skip the confirmation prompt"
-	flagPull    = "      --pull       pull from the device instead of pushing"
-	flagHelp    = "  -h, --help       show this help"
-	flagVersion = "      --version    show version"
+	flagRoot          = "  -r, --root DIR          library root containing roms/ and bios/ (default: local RetroDECK install, else .)"
+	flagDryRun        = "  -n, --dry-run           preview changes instead of making them (default: apply)"
+	flagGames         = "  -g, --games             also print each game's title"
+	flagDupes         = "      --dupes             also scan for exact duplicate files"
+	flagVerbose       = "  -v, --verbose           print every finding instead of a summary"
+	flagYes           = "      --yes               skip the confirmation prompt"
+	flagPull          = "      --pull              pull from the device instead of pushing"
+	flagScheme        = "      --scheme SCHEME     naming scheme: notag, keep, no-intro, redump (default: [naming] scheme, else keep)"
+	flagSyncHost      = "      --sync-host HOST    device hostname/IP (default: [sync] host)"
+	flagSyncUser      = "      --sync-user NAME    device SSH username (default: [sync] user, else deck)"
+	flagSyncPath      = "      --sync-path PATH    device library root (default: [sync] path, else auto-discovered)"
+	flagSyncExclude   = "      --sync-exclude PAT  extra rsync exclude pattern (repeatable; default: [sync] exclude)"
+	flagScrapeUser    = "      --scrape-user ID:PW ScreenScraper account (default: [scrape] user)"
+	flagScrapeThreads = "      --scrape-threads N  scrape thread count (default: [scrape] threads, else auto)"
+	flagHelp          = "  -h, --help              show this help"
+	flagVersion       = "      --version           show version"
 )
 
 // cmdInfo is one command's entry in the shared table usage() and
@@ -236,22 +281,22 @@ var commandOrder = []string{
 }
 
 var commandTable = map[string]cmdInfo{
-	"check":   {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes}},
+	"check":   {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme}},
 	"bios":    {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
 	"list":    {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
-	"rename":  {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
+	"rename":  {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagScheme}},
 	"unpack":  {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
-	"chd":     {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
+	"chd":     {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagScheme}},
 	"m3u":     {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"dvd":     {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"n64":     {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"snes":    {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"xiso":    {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
 	"rvz":     {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
-	"ps3":     {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
-	"scrape":  {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun}},
+	"ps3":     {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagScheme}},
+	"scrape":  {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagScrapeUser, flagScrapeThreads}},
 	"clean":   {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagYes}},
-	"sync":    {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull}},
+	"sync":    {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
 	"systems": {"list every known system and its class (not just populated ones)", "", nil},
 }
 
@@ -271,9 +316,19 @@ Options:
 %s
 %s
 %s
+%s
+%s
+%s
+%s
+%s
+%s
+%s
+%s
 
 Commands:
-`, prog, prog, flagRoot, flagDryRun, flagGames, flagDupes, flagYes, flagPull, flagHelp, flagVersion)
+`, prog, prog, flagRoot, flagDryRun, flagGames, flagDupes, flagVerbose, flagYes, flagPull, flagScheme,
+		flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude, flagScrapeUser, flagScrapeThreads,
+		flagHelp, flagVersion)
 	for _, name := range commandOrder {
 		fmt.Printf("  %-8s %s\n", name, commandTable[name].desc)
 	}

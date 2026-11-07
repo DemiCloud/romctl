@@ -61,7 +61,7 @@ func skyscraperArtworkPath() (string, error) {
 func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg config.Config) (bool, error) {
 	log := cliutil.NewLogger("scrape")
 	if cfg.Scrape.User == "" {
-		return false, fmt.Errorf(`set [scrape] user = "ssid:sspassword" in the config file (see --help)`)
+		return false, fmt.Errorf(`set [scrape] user = "ssid:sspassword" in the config file, or pass --scrape-user (see --help)`)
 	}
 	path, err := tools.Resolve("skyscraper")
 	if err != nil {

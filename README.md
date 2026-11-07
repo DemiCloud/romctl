@@ -116,7 +116,7 @@ Every mutating command below applies its changes immediately; pass
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan. |
+| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of a summary. |
 | `bios` | Audit BIOS files only. |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
@@ -144,11 +144,25 @@ romctl check psx              # confirm
 romctl clean psx              # after testing the new files (asks to confirm)
 ```
 
-Every suggested-fix hint in `check`'s output (and every example above) uses
+Every suggested-fix hint `check` prints (and every example above) uses
 whatever command you actually typed to invoke romctl — `./romctl`, a bare
-`romctl` from `PATH`, or an absolute path — so it can be copy-pasted as-is.
+`romctl` from `PATH`, or an absolute path — plus an explicit `-r PATH` if
+you passed one, so it can be copy-pasted as-is and will still target the
+right library root even from a different directory or shell session.
 
-`check` output format: `LEVEL  system  file: message  [suggested command]`.
+By default `check` prints a live spinner per category while it runs
+(naming, structure, containers, bios, and duplicates if `--dupes` is set -
+each category scans every system in parallel), then three sections:
+`Checks:` (a one-line tally per category), `Fixes:` (how to resolve what
+was found - one collapsed line per command-backed fix, e.g. "12 finding(s)
+-> romctl rename all", since running it fixes every instance; one line per
+finding for anything without a command, naming the actual file, e.g.
+"psx bios/scph5501.bin: acquire bios/scph5501.bin and place it in bios/"),
+and the colorized summary. Pass `-v`/`--verbose` to skip the spinners and
+print every individual finding as it's found instead (the previous,
+only behavior):
+
+`LEVEL  system  file: message  [suggested command]`.
 
 | Level | Meaning |
 |---|---|
@@ -157,16 +171,19 @@ whatever command you actually typed to invoke romctl — `./romctl`, a bare
 | `INFO` | Optional improvement or pending cleanup |
 
 A run with no `FAIL` or `WARN` findings ends with `✓ Clean`. Color is used
-only on a terminal and honors `NO_COLOR`.
+only on a terminal and honors `NO_COLOR`; the spinner likewise only
+appears on a terminal (stderr) and never corrupts piped/redirected output.
 
 `check --dupes` additionally scans each system for exact (byte-for-byte)
 duplicate files, flagging every copy after the first. This is off by
 default: unlike every other check, finding exact duplicates means reading
 every file's full content, which takes meaningfully longer on a library
-with large CHD/ISO files. It only catches true duplicates - a game present
-under two different region dumps (different hashes, same underlying game)
-isn't detected; doing that precisely needs No-Intro/Redump-style DAT
-clone-group data, which is out of scope for now.
+with large CHD/ISO files - though every file within a system is now
+hashed in parallel, so the wall-clock cost is lower than it used to be.
+It only catches true duplicates - a game present under two different
+region dumps (different hashes, same underlying game) isn't detected;
+doing that precisely needs No-Intro/Redump-style DAT clone-group data,
+which is out of scope for now.
 
 ## Library conventions
 
@@ -190,13 +207,13 @@ Disc numbers are zero-padded so they sort correctly.
 ### Naming
 
 How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit treat
-region/dump tags depends on `[naming] scheme` in the config file (see
-[Configuration](#configuration)):
+region/dump tags depends on `[naming] scheme` in the config file, or
+`--scheme` on the command line (see [Configuration](#configuration)):
 
 | `scheme` | Behavior |
 |---|---|
-| `notag` (default) | One definitive version per game, no tags: `Sonic CD`, not `Sonic CD (USA) [!]`. `(Disc N)` is the only tag kept, and only inside `.m3u` directories. |
-| `keep` | Leave names exactly as found; `rename` becomes a no-op. |
+| `keep` (default) | Leave names exactly as found; `rename` becomes a no-op. romctl never rewrites your naming unless you ask it to. |
+| `notag` | One definitive version per game, no tags: `Sonic CD`, not `Sonic CD (USA) [!]`. `(Disc N)` is the only tag kept, and only inside `.m3u` directories. |
 | `no-intro` | Reorder recognized `Region`/`Rev N` tags into [No-Intro's](https://wiki.no-intro.org/index.php?title=Naming_Convention) own order: `Super Mario World (Japan) (Rev 1)`. |
 | `redump` | Reorder recognized `Region`/`Disc N`/`Rev N` tags into [Redump's](http://redump.org/) own order: `Final Fantasy VII (USA) (Disc 1)`. |
 
@@ -437,7 +454,24 @@ library, across multiple systems and every media type ES-DE writes.
 TOML file (parsed, never sourced). See
 [config.example.toml](config.example.toml) for every key in one place,
 including `[scrape]` (see [Scraping](#scraping)) and `[naming]` (see
-[Naming](#naming)):
+[Naming](#naming)).
+
+**The config file is entirely optional.** Every key below also has a CLI
+flag, so a config-free setup (e.g. a first run, or a one-off invocation)
+works for every command, not just the ones without a `[...]` table:
+
+| Config key | Flag | Default when neither is set |
+|---|---|---|
+| `[library] root` | `-r`/`--root` | local RetroDECK install, else `.` |
+| `[naming] scheme` | `--scheme` | `keep` |
+| `[sync] host` | `--sync-host` | *(required for `sync`)* |
+| `[sync] user` | `--sync-user` | `deck` |
+| `[sync] path` | `--sync-path` | auto-discovered from the device |
+| `[sync] exclude` | `--sync-exclude` (repeatable) | *(none)* |
+| `[scrape] user` | `--scrape-user` | *(required for `scrape`)* |
+| `[scrape] threads` | `--scrape-threads` | auto-detected by Skyscraper |
+
+A flag always wins over the matching config value when both are set.
 
 ```toml
 [library]

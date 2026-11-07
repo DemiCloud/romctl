@@ -21,34 +21,52 @@ import (
 )
 
 // Check audits every system (structure, naming, formats) and BIOS files,
-// prints the FAIL/WARN/INFO findings and a colorized summary, and reports
-// whether anything FAILed. dupes additionally scans each system for exact
-// (byte-for-byte) duplicate files - off by default since, unlike every
-// other check, it has to read every file's full content. scheme
-// (`[naming] scheme`) is the naming-audit category's yardstick: a name
-// internal/actions.ApplyScheme wouldn't change for the configured scheme
-// isn't a finding.
-func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme) (bool, error) {
-	report := audit.New(os.Stdout)
+// then prints the Checklist, a Fixes section (how to resolve what was
+// found), and a colorized Summary, and reports whether anything FAILed.
+// dupes additionally scans each system for exact (byte-for-byte) duplicate
+// files - off by default since, unlike every other check, it has to read
+// every file's full content. scheme (`[naming] scheme`) is the
+// naming-audit category's yardstick: a name internal/actions.ApplyScheme
+// wouldn't change for the configured scheme isn't a finding. verbose
+// prints every finding as it's found (and skips the live per-category
+// spinners, which would otherwise collide with that output); rootHint, if
+// non-empty (an explicitly-passed "-r PATH"), is spliced into every
+// suggested command. Each category runs across every system in parallel -
+// independent, I/O-bound work, most visibly worthwhile for --dupes.
+func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme, verbose bool, rootHint string) (bool, error) {
+	report := audit.New(os.Stdout, verbose, rootHint)
+
+	cliutil.RunPhase(verbose, "naming (tags, articles)", func() {
+		cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
+	})
+	cliutil.RunPhase(verbose, "structure (leftovers, playlists)", func() {
+		cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
+	})
+	cliutil.RunPhase(verbose, "containers (formats, conversions)", func() {
+		cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys) })
+	})
+	cliutil.RunPhase(verbose, "bios (presence, hashes)", func() {
+		checkBios(report, lib, systems)
+	})
 	if dupes {
 		report.EnableDuplicates()
+		cliutil.RunPhase(verbose, "duplicates (exact content matches)", func() {
+			cliutil.Parallel(systems, func(sys string) {
+				checkDuplicates(report, sys, filepath.Join(lib.Roms, sys))
+			})
+		})
 	}
-	for _, sys := range systems {
-		checkSystem(report, lib, sys, scheme)
-		if dupes {
-			checkDuplicates(report, sys, filepath.Join(lib.Roms, sys))
-		}
-	}
-	checkBios(report, lib, systems)
+
 	colors := cliutil.NewColors(os.Stdout)
 	report.Checklist(os.Stdout, colors)
+	report.Fixes(os.Stdout)
 	report.Summary(os.Stdout, colors)
 	return !report.Failed(), nil
 }
 
 // Bios audits only BIOS files.
 func Bios(lib *library.Library, systems []string) (bool, error) {
-	report := audit.New(os.Stdout)
+	report := audit.New(os.Stdout, false, "")
 	checkBios(report, lib, systems)
 	if report.BiosSkipped() {
 		fmt.Println("no bios/ directory; skipping BIOS checks")
@@ -57,7 +75,56 @@ func Bios(lib *library.Library, systems []string) (bool, error) {
 	return !report.Failed(), nil
 }
 
-func checkSystem(report *audit.Report, lib *library.Library, sys string, scheme actions.Scheme) {
+// nonROMExts are extensions check never flags on their own: sidecar/save
+// data (sav/srm/state/sh get their own structure finding first, see
+// checkStructureFile; everything else here is silently ignored) and
+// incomplete-transfer markers (part/tmp, likewise flagged first in
+// checkStructureFile). Shared by checkNaming and checkContainerFile, which
+// have no file-type-specific finding of their own for any of these.
+var nonROMExts = map[string]bool{
+	"part": true, "tmp": true,
+	"sav": true, "srm": true, "state": true, "sh": true,
+	"txt": true, "ini": true, "cheats": true, "ips": true, "bps": true, "ups": true, "sbi": true, "dat": true, "directory": true,
+}
+
+// isLeftoverInfix reports whether base is an atomic-write-in-progress
+// leftover (see AGENTS.md's Atomic outputs invariant): *.partial.*,
+// *.tmp.*, or *.romctl-rename.*. Narrower than list.go's isLeftover (which
+// also matches a bare .part/.tmp extension): checkStructureFile reports
+// those two cases with different messages, so it needs to tell them apart.
+func isLeftoverInfix(base string) bool {
+	return strings.Contains(base, ".partial.") || strings.Contains(base, ".tmp.") || strings.Contains(base, ".romctl-rename.")
+}
+
+func checkNaming(report *audit.Report, lib *library.Library, sys string, scheme actions.Scheme) {
+	if systemdb.ClassOf(sys) == systemdb.ClassArcade {
+		return // arcade filenames are set names the emulator resolves, never renamed
+	}
+	sysDir := filepath.Join(lib.Roms, sys)
+	entries, err := os.ReadDir(sysDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		base := e.Name()
+		if base == "systeminfo.txt" || base == ".directory" || isLeftoverInfix(base) {
+			continue
+		}
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
+		if nonROMExts[ext] {
+			continue
+		}
+		name := strings.TrimSuffix(base, filepath.Ext(base))
+		if clean := actions.ApplyScheme(name, scheme); clean != name {
+			report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+"."+ext), "rename")
+		}
+	}
+}
+
+func checkStructure(report *audit.Report, lib *library.Library, sys string) {
 	class := systemdb.ClassOf(sys)
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)
@@ -65,45 +132,28 @@ func checkSystem(report *audit.Report, lib *library.Library, sys string, scheme 
 		return
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if name == "systeminfo.txt" || name == ".directory" {
+		base := e.Name()
+		if base == "systeminfo.txt" || base == ".directory" {
 			continue
 		}
-		path := filepath.Join(sysDir, name)
+		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
-			checkDir(report, sys, class, path)
+			checkStructureDir(report, sys, path)
 		} else {
-			checkFile(report, sys, class, path, scheme)
+			checkStructureFile(report, sys, class, path)
 		}
 	}
 }
 
-func checkDir(report *audit.Report, sys string, class systemdb.Class, dirPath string) {
+func checkStructureDir(report *audit.Report, sys, dirPath string) {
 	base := filepath.Base(dirPath)
 	switch {
 	case base == "_to_delete":
 		report.Add(audit.Info, audit.CategoryStructure, sys, base, "pending deletion", "clean")
-		return
 	case strings.HasPrefix(base, "_extract."):
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "leftover extraction directory", "")
-		return
 	case strings.HasSuffix(base, ".m3u"):
 		checkM3uDir(report, sys, dirPath)
-		return
-	}
-	switch class {
-	case systemdb.ClassCD, systemdb.ClassDVD:
-		report.Add(audit.Warn, audit.CategoryContainers, sys, base, "game directory; convert to CHD", "chd")
-	case systemdb.ClassPS3:
-		switch {
-		case exists(filepath.Join(dirPath, "PS3_GAME", "USRDIR", "EBOOT.BIN")):
-			report.Add(audit.Info, audit.CategoryContainers, sys, base, "disc folder; could be a single ISO", "ps3")
-		case exists(filepath.Join(dirPath, "USRDIR", "EBOOT.BIN")):
-			report.Add(audit.Warn, audit.CategoryContainers, sys, base,
-				"installed/PSN-style folder; needs a license (RAP) and cannot become an ISO", "")
-		default:
-			report.Add(audit.Fail, audit.CategoryContainers, sys, base, "no EBOOT.BIN found", "")
-		}
 	}
 }
 
@@ -142,16 +192,13 @@ func checkM3uDir(report *audit.Report, sys, dirPath string) {
 
 var discTagRE = regexp.MustCompile(`\(Disc \d+\)`)
 
-func checkFile(report *audit.Report, sys string, class systemdb.Class, filePath string, scheme actions.Scheme) {
+func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
 	base := filepath.Base(filePath)
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
-	name := strings.TrimSuffix(base, filepath.Ext(base))
-
-	switch {
-	case strings.Contains(base, ".partial.") || strings.Contains(base, ".tmp.") || strings.Contains(base, ".romctl-rename."):
+	if isLeftoverInfix(base) {
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "incomplete conversion leftover; delete it", "")
 		return
 	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
 	switch ext {
 	case "part", "tmp":
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "incomplete transfer/conversion leftover", "")
@@ -161,18 +208,68 @@ func checkFile(report *audit.Report, sys string, class systemdb.Class, filePath 
 			report.Add(audit.Warn, audit.CategoryStructure, sys, base, "does not belong in roms/", "")
 		}
 		return
-	case "txt", "ini", "cheats", "ips", "bps", "ups", "sbi", "dat", "directory":
+	}
+	if nonROMExts[ext] || class == systemdb.ClassArcade {
 		return
 	}
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	if discTagRE.MatchString(name) {
+		report.Add(audit.Warn, audit.CategoryStructure, sys, base,
+			"loose multi-disc file; belongs in a .m3u directory", "m3u")
+	}
+}
 
-	if class != systemdb.ClassArcade {
-		if clean := actions.ApplyScheme(name, scheme); clean != name {
-			report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+"."+ext), "rename")
+func checkContainers(report *audit.Report, lib *library.Library, sys string) {
+	class := systemdb.ClassOf(sys)
+	sysDir := filepath.Join(lib.Roms, sys)
+	entries, err := os.ReadDir(sysDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if base == "systeminfo.txt" || base == ".directory" {
+			continue
 		}
-		if discTagRE.MatchString(name) {
-			report.Add(audit.Warn, audit.CategoryStructure, sys, base,
-				"loose multi-disc file; belongs in a .m3u directory", "m3u")
+		path := filepath.Join(sysDir, base)
+		if e.IsDir() {
+			checkContainerDir(report, sys, class, path)
+		} else {
+			checkContainerFile(report, sys, class, path)
 		}
+	}
+}
+
+func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, dirPath string) {
+	base := filepath.Base(dirPath)
+	switch {
+	case base == "_to_delete", strings.HasPrefix(base, "_extract."), strings.HasSuffix(base, ".m3u"):
+		return // checkStructureDir's territory
+	}
+	switch class {
+	case systemdb.ClassCD, systemdb.ClassDVD:
+		report.Add(audit.Warn, audit.CategoryContainers, sys, base, "game directory; convert to CHD", "chd")
+	case systemdb.ClassPS3:
+		switch {
+		case exists(filepath.Join(dirPath, "PS3_GAME", "USRDIR", "EBOOT.BIN")):
+			report.Add(audit.Info, audit.CategoryContainers, sys, base, "disc folder; could be a single ISO", "ps3")
+		case exists(filepath.Join(dirPath, "USRDIR", "EBOOT.BIN")):
+			report.Add(audit.Warn, audit.CategoryContainers, sys, base,
+				"installed/PSN-style folder; needs a license (RAP) and cannot become an ISO", "")
+		default:
+			report.Add(audit.Fail, audit.CategoryContainers, sys, base, "no EBOOT.BIN found", "")
+		}
+	}
+}
+
+func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
+	base := filepath.Base(filePath)
+	if isLeftoverInfix(base) {
+		return // checkStructureFile's territory
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
+	if nonROMExts[ext] {
+		return
 	}
 
 	key := string(class) + ":" + ext

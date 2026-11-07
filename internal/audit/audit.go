@@ -1,11 +1,13 @@
 // Package audit implements the check/bios findings report: the
-// FAIL/WARN/INFO lines, the per-category checklist, and the colorized
-// summary.
+// FAIL/WARN/INFO lines, the per-category checklist, the Fixes section, and
+// the colorized summary.
 package audit
 
 import (
 	"fmt"
 	"io"
+	"strings"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/cliutil"
 )
@@ -41,25 +43,58 @@ var categoryLabels = map[Category]string{
 	CategoryDuplicates: "duplicates (exact content matches)",
 }
 
+// knownFixes are the subcommands a finding's fix can name - anything else
+// passed as fix is treated as "no command", not a typo, since every
+// command-backed finding in commands/check.go uses one of these.
+var knownFixes = map[string]bool{
+	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
+	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
+}
+
 type tally struct{ fail, warn, info int }
 
-// Report accumulates and prints audit findings.
+// finding is one buffered Add() call, kept so Fixes() can build its
+// suggestions after every category has run.
+type finding struct {
+	level            Level
+	category         Category
+	system, path, fx string
+	message          string
+}
+
+// Report accumulates audit findings. In verbose mode each finding prints
+// as it's added; otherwise findings are buffered silently and only
+// Checklist/Fixes/Summary print, after every category has finished.
+// Add is safe to call from multiple goroutines (see commands.Check).
 type Report struct {
+	mu                 sync.Mutex
 	w                  io.Writer
+	verbose            bool
+	rootHint           string
 	fails, warns, info int
 	byCategory         map[Category]*tally
+	findings           []finding
 	biosSkipped        bool
 	dupesEnabled       bool
 }
 
-// New returns a Report that prints findings to w as they're added.
-func New(w io.Writer) *Report {
-	return &Report{w: w, byCategory: make(map[Category]*tally)}
+// New returns a Report that prints to w. verbose prints every finding as
+// it's added (Fixes/Checklist/Summary still print at the end either way).
+// rootHint, if non-empty (an explicitly-passed "-r PATH"), is spliced into
+// every suggested command so a copy-pasted fix still targets the right
+// library root.
+func New(w io.Writer, verbose bool, rootHint string) *Report {
+	return &Report{w: w, verbose: verbose, rootHint: rootHint, byCategory: make(map[Category]*tally)}
 }
 
-// Add records and prints one finding. fix, if non-empty, is a command
-// suffix shown as "[<prog> fix system]" so the hint can be copy-pasted.
+// Add records one finding, printing it immediately in verbose mode. fix,
+// if a known subcommand, is shown inline as "[<prog> [-r root] fix
+// system]" so the hint can be copy-pasted; anything else (including "") is
+// treated as no command, and Fixes() explains it instead.
 func (r *Report) Add(level Level, category Category, system, path, message, fix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	switch level {
 	case Fail:
 		r.fails++
@@ -81,13 +116,26 @@ func (r *Report) Add(level Level, category Category, system, path, message, fix 
 	case Info:
 		t.info++
 	}
+	r.findings = append(r.findings, finding{level, category, system, path, fix, message})
 
-	if fix != "" {
-		fmt.Fprintf(r.w, "%-4s  %-12s %s: %s  [%s %s %s]\n",
-			level, system, path, message, cliutil.ProgName(), fix, system)
+	if !r.verbose {
+		return
+	}
+	if knownFixes[fix] {
+		fmt.Fprintf(r.w, "%-4s  %-12s %s: %s  [%s]\n", level, system, path, message, r.commandHint(fix, system))
 		return
 	}
 	fmt.Fprintf(r.w, "%-4s  %-12s %s: %s\n", level, system, path, message)
+}
+
+// commandHint builds "<prog> [-r root] <fix> <system>" for a per-line hint.
+func (r *Report) commandHint(fix, system string) string {
+	parts := []string{cliutil.ProgName()}
+	if r.rootHint != "" {
+		parts = append(parts, r.rootHint)
+	}
+	parts = append(parts, fix, system)
+	return strings.Join(parts, " ")
 }
 
 // SkipBios marks the BIOS category as not run (no bios/ directory), so the
@@ -143,6 +191,98 @@ func (r *Report) Checklist(w io.Writer, colors cliutil.Colors) {
 		default:
 			fmt.Fprintf(w, "  %-34s %s✓ clean%s\n", label, colors.Green, colors.Reset)
 		}
+	}
+}
+
+// explanations maps a message substring to a fix phrase, built with the
+// finding's own path - checked in order, first match wins. Every entry
+// here corresponds to a fix=="" finding in commands/check.go; a future
+// one that isn't listed still gets a line (Fixes falls back to the raw
+// message), just not a prescribed action.
+var explanations = []struct {
+	substr string
+	build  func(path string) string
+}{
+	{"required BIOS missing", func(p string) string { return fmt.Sprintf("acquire %s and place it in bios/", p) }},
+	{"does not match reference", func(p string) string {
+		return fmt.Sprintf("re-acquire %s; its hash doesn't match the known-good version", p)
+	}},
+	{"unexpected size for DS firmware", func(p string) string {
+		return fmt.Sprintf("re-acquire bios/%s; wrong file size", p)
+	}},
+	{"not a valid CHD", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"not a valid XISO", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"truncated or not ISO9660", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"leftover extraction directory", func(p string) string {
+		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
+	}},
+	{"incomplete", func(p string) string {
+		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
+	}},
+	{"no EBOOT.BIN found", func(p string) string {
+		return fmt.Sprintf("re-acquire the %s PS3 dump; EBOOT.BIN is missing or the folder is incomplete", p)
+	}},
+	{"missing playlist", func(p string) string {
+		return fmt.Sprintf("recreate %s, listing each disc file one per line", p)
+	}},
+	{"playlist entry not found", func(p string) string {
+		return fmt.Sprintf("restore the disc file referenced in %s, or remove its line from the playlist", p)
+	}},
+	{"disc file(s) but", func(p string) string {
+		return fmt.Sprintf("check %s against its actual disc files; counts don't match", p)
+	}},
+	{"does not belong in roms/", func(p string) string {
+		return fmt.Sprintf("move %s out of roms/; it's emulator save/state data, not part of the dump", p)
+	}},
+	{"identical to", func(p string) string {
+		return fmt.Sprintf("remove %s; it's an exact duplicate of another file already kept", p)
+	}},
+}
+
+// explain returns the fix phrase for a fix=="" finding's message, falling
+// back to the raw message verbatim if nothing in explanations matches -
+// so a finding never silently loses its specifics.
+func explain(message, path string) string {
+	for _, e := range explanations {
+		if strings.Contains(message, e.substr) {
+			return e.build(path)
+		}
+	}
+	return message
+}
+
+// Fixes prints how to resolve what was found: one aggregate line per
+// command-backed fix type (running it fixes every instance, so a count is
+// enough), then one line per command-less finding, each naming its actual
+// file (a count alone wouldn't say what to go acquire).
+func (r *Report) Fixes(w io.Writer) {
+	if len(r.findings) == 0 {
+		return
+	}
+	var commandOrder []string
+	commandCounts := map[string]int{}
+	var explained []finding
+	for _, f := range r.findings {
+		if knownFixes[f.fx] {
+			if commandCounts[f.fx] == 0 {
+				commandOrder = append(commandOrder, f.fx)
+			}
+			commandCounts[f.fx]++
+			continue
+		}
+		explained = append(explained, f)
+	}
+	if len(commandOrder) == 0 && len(explained) == 0 {
+		return
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Fixes:")
+	for _, fix := range commandOrder {
+		fmt.Fprintf(w, "  %d finding(s) -> %s\n", commandCounts[fix], r.commandHint(fix, "all"))
+	}
+	for _, f := range explained {
+		fmt.Fprintf(w, "  %-12s %s: %s\n", f.system, f.path, explain(f.message, f.path))
 	}
 }
 

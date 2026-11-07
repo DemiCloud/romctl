@@ -41,7 +41,7 @@ func TestCheckDuplicates(t *testing.T) {
 	write("notes.txt", "identical-content") // not hashable, must not be flagged
 
 	var buf bytes.Buffer
-	report := audit.New(&buf)
+	report := audit.New(&buf, true, "")
 	checkDuplicates(report, "snes", dir)
 
 	out := buf.String()
