@@ -17,29 +17,41 @@ import (
 // defaults to "no" when stdin isn't a terminal).
 func Clean(lib *library.Library, runner *actions.Runner, systems []string, assumeYes bool) error {
 	log := cliutil.NewLogger("clean")
-	found := false
+
+	type target struct {
+		sys, dir string
+		size     int64
+	}
+	var targets []*target
 	for _, sys := range systems {
 		dir := filepath.Join(lib.Roms, sys, "_to_delete")
-		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		found = true
-		size := humanSize(dirSize(dir))
-		if !runner.Act("delete %s/_to_delete (%s)", sys, size) {
-			continue
-		}
-		if !assumeYes && !cliutil.Confirm(fmt.Sprintf("Permanently delete %s? This cannot be undone.", dir)) {
-			log.Errf("skipped (not confirmed): %s", dir)
-			continue
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			log.Errf("delete failed: %s: %v", dir, err)
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			targets = append(targets, &target{sys: sys, dir: dir})
 		}
 	}
-	if !found {
+	if len(targets) == 0 {
 		colors := cliutil.NewColors(os.Stdout)
 		fmt.Printf("%s✓ nothing to clean%s\n", colors.Green, colors.Reset)
+		return nil
+	}
+
+	// Measuring each _to_delete/ (a full directory walk) is the only slow
+	// part here - do it for every system up front, in parallel, before the
+	// loop below, which must stay sequential since it prompts
+	// interactively per system.
+	cliutil.Parallel(targets, func(t *target) { t.size = dirSize(t.dir) })
+
+	for _, t := range targets {
+		if !runner.Act("delete %s/_to_delete (%s)", t.sys, humanSize(t.size)) {
+			continue
+		}
+		if !assumeYes && !cliutil.Confirm(fmt.Sprintf("Permanently delete %s? This cannot be undone.", t.dir)) {
+			log.Errf("skipped (not confirmed): %s", t.dir)
+			continue
+		}
+		if err := os.RemoveAll(t.dir); err != nil {
+			log.Errf("delete failed: %s: %v", t.dir, err)
+		}
 	}
 	return nil
 }
