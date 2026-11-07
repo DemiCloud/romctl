@@ -112,11 +112,15 @@ these never overrides an actual `roms/` sitting in the current directory,
 even if it's not the RetroDECK install's own resolved path. Systems are
 directory names under `roms/`; omit them or pass `all` for every system.
 Every mutating command below applies its changes immediately; pass
-`--dry-run`/`-n` to preview instead.
+`--dry-run`/`-n` to preview instead. By default every command prints a
+one-line summary when it finishes (e.g. `chd: 3 converted, 1 skipped, 0
+failed`) instead of a line per file; pass `-v`/`--verbose` to also print
+each individual action as it happens. `--dry-run` always previews in full
+regardless of `-v` - that's the point of a dry run.
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of a summary. |
+| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. |
 | `bios` | Audit BIOS files only. |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |

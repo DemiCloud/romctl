@@ -19,6 +19,12 @@ import (
 // Runner announces or performs a mutating step depending on DryRun.
 type Runner struct {
 	DryRun bool
+	// Verbose prints a "do:" line for every action as it's applied; off
+	// by default, every mutating command still prints its own one-line
+	// summary once finished. DryRun always previews in full regardless -
+	// that's the whole point of --dry-run - so Verbose has no effect
+	// there.
+	Verbose bool
 }
 
 // Act prints a plan:/do: line for desc and reports whether the caller
@@ -30,7 +36,9 @@ func (r *Runner) Act(format string, args ...any) bool {
 		fmt.Printf("plan: %s\n", desc)
 		return false
 	}
-	fmt.Printf("do:   %s\n", desc)
+	if r.Verbose {
+		fmt.Printf("do:   %s\n", desc)
+	}
 	return true
 }
 

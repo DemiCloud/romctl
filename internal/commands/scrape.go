@@ -94,9 +94,7 @@ func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg 
 		scraped++
 	}
 
-	if scraped+skipped+failed > 0 {
-		fmt.Printf("scrape: %d scraped, %d skipped, %d failed\n", scraped, skipped, failed)
-	}
+	fmt.Printf("scrape: %d scraped, %d skipped, %d failed\n", scraped, skipped, failed)
 	return failed == 0, nil
 }
 
