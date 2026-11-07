@@ -15,6 +15,19 @@ func writeConfig(t *testing.T, content string) string {
 	return path
 }
 
+func TestLoadLibraryConfig(t *testing.T) {
+	path := writeConfig(t, `[library]
+root = "/path/to/library"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Library.Root != "/path/to/library" {
+		t.Errorf("Library.Root = %q", cfg.Library.Root)
+	}
+}
+
 func TestLoadMinimalConfig(t *testing.T) {
 	path := writeConfig(t, `[sync]
 host = "host1.example.com"

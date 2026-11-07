@@ -12,9 +12,20 @@ import (
 
 // Config holds the settings read from the romctl config file.
 type Config struct {
-	Sync   SyncConfig   `toml:"sync"`
-	Scrape ScrapeConfig `toml:"scrape"`
-	Naming NamingConfig `toml:"naming"`
+	Library LibraryConfig `toml:"library"`
+	Sync    SyncConfig    `toml:"sync"`
+	Scrape  ScrapeConfig  `toml:"scrape"`
+	Naming  NamingConfig  `toml:"naming"`
+}
+
+// LibraryConfig holds the `library` table.
+type LibraryConfig struct {
+	// Root overrides the library root when `-r`/`--root` isn't passed.
+	// Leave unset on a RetroDECK device itself: romctl auto-discovers it
+	// the same way `sync` does remotely, by reading RetroDECK's own
+	// retrodeck.json (see internal/retrodeck), just from the local
+	// filesystem instead of over SSH.
+	Root string `toml:"root"`
 }
 
 // SyncConfig holds the `sync` table.

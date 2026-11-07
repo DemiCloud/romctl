@@ -15,6 +15,7 @@ import (
 	"github.com/demicloud/romctl/internal/commands"
 	"github.com/demicloud/romctl/internal/config"
 	"github.com/demicloud/romctl/internal/library"
+	"github.com/demicloud/romctl/internal/retrodeck"
 	"github.com/demicloud/romctl/internal/sync"
 	"github.com/demicloud/romctl/internal/version"
 )
@@ -84,8 +85,6 @@ func run(args []string) int {
 		return 0
 	}
 
-	lib := library.Open(*root)
-
 	cfgPath, err := config.DefaultPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
@@ -96,6 +95,8 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
 		return 1
 	}
+	lib := library.Open(resolveRoot(*root, fs.Changed("root"), cfg.Library.Root))
+
 	scheme, err := actions.ParseScheme(cfg.Naming.Scheme)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
@@ -135,6 +136,25 @@ func run(args []string) int {
 		}
 	}
 	return 0
+}
+
+// resolveRoot picks the library root: an explicit `-r`/`--root` flag
+// wins outright; otherwise `[library] root` in the config file; otherwise
+// a local RetroDECK install, auto-discovered the same way `sync` finds
+// one remotely (see internal/retrodeck) - this is what lets romctl run
+// directly on a RetroDECK device with no `-r` or config needed at all.
+// Falls back to flagRoot (its "." default) if none of those apply.
+func resolveRoot(flagRoot string, flagChanged bool, cfgRoot string) string {
+	if flagChanged {
+		return flagRoot
+	}
+	if cfgRoot != "" {
+		return cfgRoot
+	}
+	if resolved, err := retrodeck.ResolveLocal(); err == nil {
+		return resolved
+	}
+	return flagRoot
 }
 
 func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes bool, scheme actions.Scheme, cfg config.Config) (bool, error) {
@@ -184,7 +204,7 @@ func runSync(lib *library.Library, dryRun, pull bool, cfg config.Config, targets
 // Flag lines shared between the global usage and per-command help, kept
 // in one place so they can't drift apart.
 const (
-	flagRoot    = "  -r, --root DIR   library root containing roms/ and bios/ (default: .)"
+	flagRoot    = "  -r, --root DIR   library root containing roms/ and bios/ (default: local RetroDECK install, else .)"
 	flagDryRun  = "  -n, --dry-run    preview changes instead of making them (default: apply)"
 	flagGames   = "  -g, --games      also print each game's title"
 	flagDupes   = "      --dupes      with check, also scan for exact duplicate files"

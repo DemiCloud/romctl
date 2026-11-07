@@ -4,7 +4,6 @@
 package sync
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,12 +11,8 @@ import (
 
 	"github.com/demicloud/romctl/internal/config"
 	"github.com/demicloud/romctl/internal/executil"
+	"github.com/demicloud/romctl/internal/retrodeck"
 )
-
-// retrodeckConfigPath is where RetroDECK's own Flatpak keeps its resolved
-// paths, relative to the remote user's home directory - fixed regardless
-// of whether the library itself lives on internal storage or an SD card.
-const retrodeckConfigPath = "~/.var/app/net.retrodeck.retrodeck/config/retrodeck/retrodeck.json"
 
 // defaultSyncUser is the standard Steam Deck / RetroDECK username.
 const defaultSyncUser = "deck"
@@ -167,12 +162,12 @@ func Run(opts Options) error {
 // auth: it's non-interactive and can't prompt for a password.
 func resolveRetroDeckHome(user, host string, mux *sshMux) (string, error) {
 	target := fmt.Sprintf("%s@%s", user, host)
-	args := append(mux.sshArgs(), target, "cat", retrodeckConfigPath)
+	args := append(mux.sshArgs(), target, "cat", retrodeck.RemotePath)
 	out, err := executil.Run("ssh", args...)
 	if err != nil {
 		return "", fmt.Errorf("reading RetroDECK config on %s: %w: %s (set [sync] path to override)", host, err, out)
 	}
-	rdHome, err := parseRDHomePath(out)
+	rdHome, err := retrodeck.ParseRDHomePath(out)
 	if err != nil {
 		return "", fmt.Errorf("parsing RetroDECK config from %s: %w (set [sync] path to override)", host, err)
 	}
@@ -237,21 +232,4 @@ func (m *sshMux) Close() {
 	}
 	_, _ = executil.Run("ssh", "-o", "ControlPath="+m.path, "-O", "exit", m.target)
 	os.RemoveAll(m.dir)
-}
-
-// parseRDHomePath extracts paths.rd_home_path from a RetroDECK
-// retrodeck.json config file's contents.
-func parseRDHomePath(data []byte) (string, error) {
-	var parsed struct {
-		Paths struct {
-			RDHomePath string `json:"rd_home_path"`
-		} `json:"paths"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return "", err
-	}
-	if parsed.Paths.RDHomePath == "" {
-		return "", fmt.Errorf("no paths.rd_home_path in config")
-	}
-	return parsed.Paths.RDHomePath, nil
 }

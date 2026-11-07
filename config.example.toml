@@ -5,6 +5,14 @@
 # only what you need. See README.md's "Scraping" and "Syncing to a device"
 # sections for the full explanation of each.
 
+[library]
+
+# Overrides the library root when `-r`/`--root` isn't passed. Leave unset
+# on a RetroDECK device itself: romctl auto-discovers it there the same
+# way it does for `sync`'s remote device (works whether it's on internal
+# storage or an SD card). Only needed for a non-standard local setup.
+#root = "/path/to/library"
+
 [sync]
 
 # Required for `sync`. The device's hostname or IP.

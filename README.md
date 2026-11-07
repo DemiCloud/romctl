@@ -104,8 +104,11 @@ romctl COMMAND [SYSTEM...|all] [--dry-run] [-r ROOT]
 ```
 
 Options may appear anywhere on the command line. `ROOT` is the library root
-containing `roms/` and `bios/` (default: current directory). Systems are
-directory names under `roms/`; omit them or pass `all` for every system.
+containing `roms/` and `bios/`. If `-r`/`--root` isn't passed, romctl looks
+for `[library] root` in the config file, then for a local RetroDECK
+install to auto-discover it from (see [Configuration](#configuration)), and
+only then falls back to the current directory. Systems are directory names
+under `roms/`; omit them or pass `all` for every system.
 Every mutating command below applies its changes immediately; pass
 `--dry-run`/`-n` to preview instead.
 
@@ -435,10 +438,21 @@ including `[scrape]` (see [Scraping](#scraping)) and `[naming]` (see
 [Naming](#naming)):
 
 ```toml
+[library]
+root = "/path/to/library"   # optional override for the -r default (see below)
+
 [sync]
 host = "host1.example.com"
 exclude = ["*.keep"]   # optional, extra rsync exclude patterns
 ```
+
+`[library] root` overrides the library root when `-r`/`--root` isn't
+passed on the command line. Leave it unset when running romctl directly
+on a RetroDECK device: romctl auto-discovers the local install's root the
+same way it auto-discovers a remote one for `sync` (see below), by
+reading RetroDECK's own `retrodeck.json`, just from the local filesystem
+instead of over SSH. `-r` always wins if passed; `[library] root` wins
+over autodiscovery otherwise.
 
 `host` is the only setting required. `user` defaults to `deck`, the
 standard Steam Deck/RetroDECK username, if not set. The device's library
@@ -465,6 +479,11 @@ before.
 If the card is mounted locally instead — plugged into the machine running
 romctl, not the device — skip `sync` entirely and just point `-r` at it
 directly.
+
+Running romctl directly on the device itself (e.g. the Steam Deck's own
+desktop mode) needs no `-r` or config at all: with no `-r` and no
+`[library] root` set, romctl looks for a local RetroDECK install the same
+way `sync` finds one remotely, and uses its library root automatically.
 
 ### What is never synced or deleted
 
