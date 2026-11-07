@@ -13,6 +13,15 @@ import (
 // raw-deflate blocks, so Decompress can be tested without a real tool.
 func buildCISO(t *testing.T, plain []byte, blockSize uint32) string {
 	t.Helper()
+	return buildCISOHeaderSize(t, plain, blockSize, 24)
+}
+
+// buildCISOHeaderSize is buildCISO with the header_size field set to an
+// arbitrary value, independent of the real (always 24-byte) on-disk
+// header layout - for exercising encoders that write 0 there instead of
+// the struct's actual size (see TestDecompressZeroHeaderSizeField).
+func buildCISOHeaderSize(t *testing.T, plain []byte, blockSize uint32, headerSizeField uint32) string {
+	t.Helper()
 	numBlocks := (len(plain) + int(blockSize) - 1) / int(blockSize)
 
 	var blocks [][]byte
@@ -49,7 +58,7 @@ func buildCISO(t *testing.T, plain []byte, blockSize uint32) string {
 
 	header := make([]byte, headerSize)
 	copy(header[0:4], "CISO")
-	binary.LittleEndian.PutUint32(header[4:8], uint32(headerSize))
+	binary.LittleEndian.PutUint32(header[4:8], headerSizeField)
 	binary.LittleEndian.PutUint64(header[8:16], uint64(len(plain)))
 	binary.LittleEndian.PutUint32(header[16:20], blockSize)
 	header[20] = 1 // version
@@ -83,6 +92,31 @@ func TestDecompress(t *testing.T) {
 	out.Close()
 
 	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, plain) {
+		t.Fatalf("decompressed %d bytes, want %d bytes to match", len(got), len(plain))
+	}
+}
+
+// TestDecompressZeroHeaderSizeField guards against a regression: some
+// real-world CISO encoders write 0 in the header_size field instead of
+// the struct's actual 24-byte size. Trusting that literal value made the
+// block index get read starting at the magic bytes themselves, producing
+// a bogus first entry ("CISO" read back as a little-endian uint32) and a
+// "corrupt index" error on every block.
+func TestDecompressZeroHeaderSizeField(t *testing.T) {
+	plain := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog "), 100)
+	path := buildCISOHeaderSize(t, plain, 2048, 0)
+
+	out := mustCreateTemp(t)
+	if err := Decompress(path, out); err != nil {
+		t.Fatalf("Decompress: %v", err)
+	}
+	out.Close()
+
+	got, err := os.ReadFile(out.Name())
 	if err != nil {
 		t.Fatal(err)
 	}

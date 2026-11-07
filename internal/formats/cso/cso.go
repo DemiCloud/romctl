@@ -58,6 +58,14 @@ func Decompress(path string, out *os.File) error {
 	if h.blockSize == 0 {
 		return fmt.Errorf("%s: invalid block size 0", path)
 	}
+	if h.headerSize == 0 {
+		// Some real-world encoders (several PSP-scene CISO tools, not just
+		// ciso/maxcso) leave this field zeroed instead of writing the
+		// struct's actual size; the on-disk header is a fixed 24 bytes
+		// regardless, and trusting a literal 0 here would read the block
+		// index starting at the magic bytes themselves.
+		h.headerSize = 24
+	}
 
 	numBlocks := int(h.totalBytes / uint64(h.blockSize))
 	if h.totalBytes%uint64(h.blockSize) != 0 {
