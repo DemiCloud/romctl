@@ -76,23 +76,34 @@ func ExtractAll(path, destDir string) error {
 	return nil
 }
 
-// IsSingleFile reports whether path contains exactly one non-directory
-// entry (the "unpack" command refuses multi-file archives).
-func IsSingleFile(path string) (bool, error) {
+// SoleEntry returns the name of path's one non-directory entry, listing
+// it without extracting anything - so a caller (namely "unpack") can
+// compute the eventual destination path and check whether it already
+// exists before paying for a full extraction. ok is false (name=="")
+// when the archive holds anything other than exactly one file; that's
+// not itself an error; a multi-file archive is a valid thing for a
+// caller to skip rather than fail on.
+func SoleEntry(path string) (name string, ok bool, err error) {
 	a, err := Open(path)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	defer a.Close()
 	entries, err := a.Entries()
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
+	var found string
 	n := 0
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name, "/") {
-			n++
+		if strings.HasSuffix(e.Name, "/") || e.Name == "" {
+			continue
 		}
+		n++
+		found = e.Name
 	}
-	return n == 1, nil
+	if n != 1 {
+		return "", false, nil
+	}
+	return found, true, nil
 }

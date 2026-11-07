@@ -35,9 +35,9 @@ func buildZip(t *testing.T, files map[string]string) string {
 func TestZipEntriesAndExtract(t *testing.T) {
 	path := buildZip(t, map[string]string{"game.rom": "rom-bytes"})
 
-	single, err := IsSingleFile(path)
-	if err != nil || !single {
-		t.Fatalf("IsSingleFile = %v, %v; want true, nil", single, err)
+	name, single, err := SoleEntry(path)
+	if err != nil || !single || name != "game.rom" {
+		t.Fatalf("SoleEntry = %q, %v, %v; want %q, true, nil", name, single, err, "game.rom")
 	}
 
 	dest := t.TempDir()
@@ -55,9 +55,9 @@ func TestZipEntriesAndExtract(t *testing.T) {
 
 func TestZipMultiFileNotSingle(t *testing.T) {
 	path := buildZip(t, map[string]string{"a.rom": "a", "b.rom": "b"})
-	single, err := IsSingleFile(path)
+	name, single, err := SoleEntry(path)
 	if err != nil || single {
-		t.Fatalf("IsSingleFile = %v, %v; want false, nil", single, err)
+		t.Fatalf("SoleEntry = %q, %v, %v; want false, nil", name, single, err)
 	}
 }
 
