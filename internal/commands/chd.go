@@ -136,6 +136,28 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 	return failed.Load() == 0, nil
 }
 
+// findByExt walks dir recursively collecting every file whose extension
+// (case-insensitive) matches one of exts. A redump/no-intro archive
+// commonly wraps its disc image in one extra per-game subfolder once
+// extracted, so a plain top-level directory listing misses it.
+func findByExt(dir string, exts ...string) ([]string, error) {
+	var out []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		for _, want := range exts {
+			if ext == want {
+				out = append(out, path)
+				return nil
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
 func entryNames(entries []os.DirEntry) []string {
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -204,23 +226,14 @@ func csoToCHD(csoPath, out string) error {
 // returns the resulting top-level name under sysDir ("<title>.chd" or
 // "<title>.m3u").
 func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, error) {
-	entries, err := os.ReadDir(dir)
+	imgs, err := findByExt(dir, ".cue", ".gdi")
 	if err != nil {
 		return "", err
 	}
-	var imgs []string
-	for _, ext := range []string{".cue", ".gdi"} {
-		for _, e := range entries {
-			if !e.IsDir() && strings.ToLower(filepath.Ext(e.Name())) == ext {
-				imgs = append(imgs, filepath.Join(dir, e.Name()))
-			}
-		}
-	}
 	if len(imgs) == 0 {
-		for _, e := range entries {
-			if !e.IsDir() && strings.ToLower(filepath.Ext(e.Name())) == ".iso" {
-				imgs = append(imgs, filepath.Join(dir, e.Name()))
-			}
+		imgs, err = findByExt(dir, ".iso")
+		if err != nil {
+			return "", err
 		}
 	}
 	sort.Strings(imgs)
