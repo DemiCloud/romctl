@@ -53,6 +53,7 @@ func run(args []string) int {
 	syncExclude := fs.StringArray("sync-exclude", nil, "")
 	scrapeUser := fs.String("scrape-user", "", "")
 	scrapeThreads := fs.Int("scrape-threads", 0, "")
+	savesDest := fs.String("dest", "", "")
 	help := fs.BoolP("help", "h", false, "")
 	showVersion := fs.Bool("version", false, "")
 
@@ -159,7 +160,7 @@ func run(args []string) int {
 		return 1
 	}
 
-	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun, Verbose: *verbose}, systems, *assumeYes, *showGames, *dupes, *verbose, rootHint, scheme, cfg)
+	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun, Verbose: *verbose}, systems, *assumeYes, *showGames, *dupes, *verbose, rootHint, scheme, cfg, *savesDest)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s: %v\n", cliutil.ProgName(), cmd, err)
 		return 1
@@ -202,7 +203,7 @@ func resolveRoot(flagRoot string, flagChanged bool, cfgRoot string) string {
 	return flagRoot
 }
 
-func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes, verbose bool, rootHint string, scheme actions.Scheme, cfg config.Config) (bool, error) {
+func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes, verbose bool, rootHint string, scheme actions.Scheme, cfg config.Config, savesDest string) (bool, error) {
 	switch cmd {
 	case "check":
 		return commands.Check(lib, systems, dupes, scheme, verbose, rootHint)
@@ -231,7 +232,7 @@ func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems 
 	case "ps3":
 		return commands.PS3(lib, runner, systems, scheme)
 	case "saves":
-		return commands.Saves(lib, runner, systems)
+		return commands.Saves(lib, runner, systems, savesDest)
 	case "clean":
 		return true, commands.Clean(lib, runner, systems, assumeYes)
 	case "scrape":
@@ -265,6 +266,7 @@ const (
 	flagSyncExclude   = "      --sync-exclude PAT  extra rsync exclude pattern (repeatable; default: [sync] exclude)"
 	flagScrapeUser    = "      --scrape-user ID:PW ScreenScraper account (default: [scrape] user)"
 	flagScrapeThreads = "      --scrape-threads N  scrape thread count (default: [scrape] threads, else auto)"
+	flagDest          = "      --dest DIR          saves: move into DIR/saves, DIR/states instead of the library root"
 	flagHelp          = "  -h, --help              show this help"
 	flagVersion       = "      --version           show version"
 )
@@ -296,7 +298,7 @@ var commandTable = map[string]cmdInfo{
 	"xiso":    {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"rvz":     {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"ps3":     {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"saves":   {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"saves":   {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest}},
 	"scrape":  {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads}},
 	"clean":   {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes}},
 	"sync":    {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
@@ -327,11 +329,12 @@ Options:
 %s
 %s
 %s
+%s
 
 Commands:
 `, prog, prog, flagRoot, flagDryRun, flagGames, flagDupes, flagVerbose, flagYes, flagPull, flagScheme,
 		flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude, flagScrapeUser, flagScrapeThreads,
-		flagHelp, flagVersion)
+		flagDest, flagHelp, flagVersion)
 	for _, name := range commandOrder {
 		fmt.Printf("  %-8s %s\n", name, commandTable[name].desc)
 	}

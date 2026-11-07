@@ -3,13 +3,14 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/library"
 )
 
-// TestSavesRelocatesByExtension exercises every extension saveExtDirs
+// TestSavesRelocatesByExtension exercises every extension saveExtSubdir
 // knows about, confirming sav/srm/sh land under saves/<system>/ and state
 // lands under states/<system>/, both siblings of roms/ at the library
 // root - and that the actual ROM file next to them is left untouched.
@@ -26,7 +27,7 @@ func TestSavesRelocatesByExtension(t *testing.T) {
 	}
 
 	lib := library.Open(root)
-	ok, err := Saves(lib, &actions.Runner{}, []string{"n64"})
+	ok, err := Saves(lib, &actions.Runner{}, []string{"n64"}, "")
 	if err != nil || !ok {
 		t.Fatalf("Saves failed: ok=%v err=%v", ok, err)
 	}
@@ -51,10 +52,72 @@ func TestSavesRelocatesByExtension(t *testing.T) {
 	}
 }
 
-// TestSavesSkipsExistingDestination guards against clobbering a file
-// already at the destination - Saves should leave both the source and
-// the pre-existing destination alone rather than overwriting save data.
-func TestSavesSkipsExistingDestination(t *testing.T) {
+// TestSavesCustomDest confirms --dest (the dest parameter) relocates
+// into DIR/saves, DIR/states instead of the library root - letting a
+// user keep save data somewhere other than the RetroDECK-managed tree.
+func TestSavesCustomDest(t *testing.T) {
+	root := t.TempDir()
+	customDest := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "n64")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysDir, "Game.srm"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := library.Open(root)
+	if _, err := Saves(lib, &actions.Runner{}, []string{"n64"}, customDest); err != nil {
+		t.Fatal(err)
+	}
+
+	if !exists(filepath.Join(customDest, "saves", "n64", "Game.srm")) {
+		t.Error("expected file under the custom --dest, not the library root")
+	}
+	if exists(filepath.Join(root, "saves", "n64", "Game.srm")) {
+		t.Error("should not have written under the library root when --dest was given")
+	}
+}
+
+// TestSavesConflictIdenticalContent confirms a destination collision
+// where both files have identical content is left in place (never
+// overwritten or deleted) and reported as identical.
+func TestSavesConflictIdenticalContent(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "snes")
+	destDir := filepath.Join(root, "saves", "snes")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysDir, "Game.srm"), []byte("same bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destDir, "Game.srm"), []byte("same bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		if _, err := Saves(lib, &actions.Runner{}, []string{"snes"}, ""); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if !exists(filepath.Join(sysDir, "Game.srm")) {
+		t.Error("source should be left in place on a conflict")
+	}
+	if !strings.Contains(out, "identical") {
+		t.Errorf("expected the conflict to be reported as identical, got: %s", out)
+	}
+}
+
+// TestSavesConflictDifferentContent confirms a destination collision
+// where the two files differ is reported as needing manual resolution,
+// not silently treated as safe to discard.
+func TestSavesConflictDifferentContent(t *testing.T) {
 	root := t.TempDir()
 	sysDir := filepath.Join(root, "roms", "snes")
 	destDir := filepath.Join(root, "saves", "snes")
@@ -72,9 +135,11 @@ func TestSavesSkipsExistingDestination(t *testing.T) {
 	}
 
 	lib := library.Open(root)
-	if _, err := Saves(lib, &actions.Runner{}, []string{"snes"}); err != nil {
-		t.Fatal(err)
-	}
+	out := captureStdout(t, func() {
+		if _, err := Saves(lib, &actions.Runner{}, []string{"snes"}, ""); err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	if !exists(filepath.Join(sysDir, "Game.srm")) {
 		t.Error("source should be left in place when destination already exists")
@@ -85,6 +150,9 @@ func TestSavesSkipsExistingDestination(t *testing.T) {
 	}
 	if string(data) != "existing" {
 		t.Error("pre-existing destination file should not be overwritten")
+	}
+	if !strings.Contains(out, "DIFFERENT") {
+		t.Errorf("expected the conflict to be reported as different, got: %s", out)
 	}
 }
 
@@ -101,7 +169,7 @@ func TestSavesDryRunMovesNothing(t *testing.T) {
 	}
 
 	lib := library.Open(root)
-	if _, err := Saves(lib, &actions.Runner{DryRun: true}, []string{"snes"}); err != nil {
+	if _, err := Saves(lib, &actions.Runner{DryRun: true}, []string{"snes"}, ""); err != nil {
 		t.Fatal(err)
 	}
 

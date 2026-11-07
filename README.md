@@ -208,9 +208,21 @@ This moves each one to `saves/<system>/` (`.sav`/`.srm`/`.sh`) or
 `states/<system>/` (`.state`), creating those directories as needed -
 RetroDECK's own per-system layout since v0.5.0b, so an emulator pointed at
 a standard RetroDECK install picks them up right where it already looks.
+Pass `--dest DIR` to relocate into `DIR/saves/`, `DIR/states/` instead -
+useful if you'd rather keep save data somewhere other than the
+RetroDECK-managed tree entirely.
+
 Nothing is ever deleted or overwritten: this is the user's actual save
-data, not a replaceable ROM dump, so a file whose destination already
-exists is left in place untouched.
+data, not a replaceable ROM dump. If the destination already has a
+same-named file, the source is left exactly where it was and the
+conflict is reported at the end instead, with both copies' size and
+modification time and whether their content actually matches:
+
+```
+Conflicts (destination already exists; left in roms/ untouched):
+  n64   Game.srm   roms/n64: 83.0KiB, 2026-09-01 14:03   vs   saves/n64: 83.0KiB, 2026-09-01 14:03   [identical, safe to delete either copy]
+  snes  Zelda.srm  roms/snes: 2.0KiB, 2026-01-02 11:00   vs   saves/snes: 2.1KiB, 2025-11-20 08:40   [DIFFERENT - resolve manually]
+```
 
 ## Library conventions
 
