@@ -51,9 +51,15 @@ func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Sc
 	if dupes {
 		report.EnableDuplicates()
 		cliutil.RunPhase(verbose, "duplicates (exact content matches)", func() {
-			cliutil.Parallel(systems, func(sys string) {
+			// Systems stay sequential here, unlike every other phase above:
+			// checkDuplicates already parallelizes the expensive part (hashing
+			// full file content) across a worker pool sized to GOMAXPROCS.
+			// Also parallelizing across systems would nest two such pools,
+			// oversubscribing the CPU (up to GOMAXPROCS^2 concurrent hashes)
+			// instead of speeding anything up.
+			for _, sys := range systems {
 				checkDuplicates(report, sys, filepath.Join(lib.Roms, sys))
-			})
+			}
 		})
 	}
 
