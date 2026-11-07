@@ -105,10 +105,12 @@ romctl COMMAND [SYSTEM...|all] [--dry-run] [-r ROOT]
 
 Options may appear anywhere on the command line. `ROOT` is the library root
 containing `roms/` and `bios/`. If `-r`/`--root` isn't passed, romctl looks
-for `[library] root` in the config file, then for a local RetroDECK
-install to auto-discover it from (see [Configuration](#configuration)), and
-only then falls back to the current directory. Systems are directory names
-under `roms/`; omit them or pass `all` for every system.
+for `[library] root` in the config file, then for a `roms/` directory right
+where it's being run from, then for a local RetroDECK install to
+auto-discover it from (see [Configuration](#configuration)) - the last of
+these never overrides an actual `roms/` sitting in the current directory,
+even if it's not the RetroDECK install's own resolved path. Systems are
+directory names under `roms/`; omit them or pass `all` for every system.
 Every mutating command below applies its changes immediately; pass
 `--dry-run`/`-n` to preview instead.
 
@@ -451,8 +453,12 @@ passed on the command line. Leave it unset when running romctl directly
 on a RetroDECK device: romctl auto-discovers the local install's root the
 same way it auto-discovers a remote one for `sync` (see below), by
 reading RetroDECK's own `retrodeck.json`, just from the local filesystem
-instead of over SSH. `-r` always wins if passed; `[library] root` wins
-over autodiscovery otherwise.
+instead of over SSH. Full precedence, highest first: `-r`/`--root` flag,
+`[library] root`, a `roms/` directory already in the current directory
+(e.g. romctl was placed straight into an existing library), then the
+RetroDECK autodiscovery - that last step only runs when the current
+directory doesn't already look like a library, so it never redirects away
+from a `roms/` that's actually right there.
 
 `host` is the only setting required. `user` defaults to `deck`, the
 standard Steam Deck/RetroDECK username, if not set. The device's library

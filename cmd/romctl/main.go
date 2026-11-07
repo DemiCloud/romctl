@@ -138,18 +138,26 @@ func run(args []string) int {
 	return 0
 }
 
-// resolveRoot picks the library root: an explicit `-r`/`--root` flag
-// wins outright; otherwise `[library] root` in the config file; otherwise
-// a local RetroDECK install, auto-discovered the same way `sync` finds
-// one remotely (see internal/retrodeck) - this is what lets romctl run
-// directly on a RetroDECK device with no `-r` or config needed at all.
-// Falls back to flagRoot (its "." default) if none of those apply.
+// resolveRoot picks the library root: an explicit `-r`/`--root` flag wins
+// outright; otherwise `[library] root` in the config file; otherwise a
+// roms/ directory already sitting right where romctl was run from (e.g.
+// dropped straight into an existing library) wins before anything else is
+// even consulted; otherwise a local RetroDECK install, auto-discovered
+// the same way `sync` finds one remotely (see internal/retrodeck) - this
+// is what lets romctl run directly on a RetroDECK device with no `-r` or
+// config needed at all, but it must never override an obvious local
+// roms/ that just happens to live somewhere other than the RetroDECK
+// install's own resolved path. Falls back to flagRoot (its "." default)
+// if none of those apply.
 func resolveRoot(flagRoot string, flagChanged bool, cfgRoot string) string {
 	if flagChanged {
 		return flagRoot
 	}
 	if cfgRoot != "" {
 		return cfgRoot
+	}
+	if library.HasRoms(flagRoot) {
+		return flagRoot
 	}
 	if resolved, err := retrodeck.ResolveLocal(); err == nil {
 		return resolved

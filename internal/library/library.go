@@ -27,6 +27,14 @@ func Open(root string) *Library {
 	}
 }
 
+// HasRoms reports whether root itself already has a roms/ directory,
+// without needing a resolved Library - used to decide root precedence
+// before a Library is even opened (see cmd/romctl's resolveRoot).
+func HasRoms(root string) bool {
+	info, err := os.Stat(filepath.Join(root, "roms"))
+	return err == nil && info.IsDir()
+}
+
 // RequireRoms errors unless roms/ exists under the library root.
 func (l *Library) RequireRoms() error {
 	if info, err := os.Stat(l.Roms); err != nil || !info.IsDir() {
