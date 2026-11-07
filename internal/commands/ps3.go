@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 
@@ -20,19 +21,24 @@ import (
 // resulting ISO's name; see internal/actions.ApplyScheme.
 func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	log := cliutil.NewLogger("ps3")
-	var failed atomic.Bool
+	var unpacked, built, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		spec, ok := discimage.SpecFor(systemdb.ClassOf(sys))
 		if !ok {
 			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
-		if err := discimage.UnpackArchives(sysDir, sys, spec, runner, log, scheme); err != nil {
-			failed.Store(true)
+		n, err := discimage.UnpackArchives(sysDir, sys, spec, runner, log, scheme)
+		unpacked.Add(int64(n))
+		if err != nil {
+			failed.Add(1)
 		}
-		if err := discimage.BuildISOs(sysDir, sys, spec, runner, log); err != nil {
-			failed.Store(true)
+		n, err = discimage.BuildISOs(sysDir, sys, spec, runner, log)
+		built.Add(int64(n))
+		if err != nil {
+			failed.Add(1)
 		}
 	})
-	return !failed.Load(), nil
+	fmt.Printf("ps3: %d unpacked, %d built, %d failed\n", unpacked.Load(), built.Load(), failed.Load())
+	return failed.Load() == 0, nil
 }

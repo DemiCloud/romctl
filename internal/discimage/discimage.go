@@ -65,12 +65,14 @@ func SpecFor(class systemdb.Class) (Spec, bool) {
 // sysDir whose contents match spec into a FolderSuffix-named staging
 // directory, retiring the archive on success. scheme (`[naming] scheme`)
 // controls how the archive's region/dump tags end up in the staging
-// directory's name; see internal/actions.ApplyScheme.
-func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger, scheme actions.Scheme) error {
+// directory's name; see internal/actions.ApplyScheme. Returns the number
+// of archives successfully unpacked, so callers can report a summary.
+func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger, scheme actions.Scheme) (int, error) {
 	entries, err := os.ReadDir(sysDir)
 	if err != nil {
-		return nil
+		return 0, nil
 	}
+	unpacked := 0
 	failed := false
 	for _, e := range entries {
 		if e.IsDir() {
@@ -92,12 +94,14 @@ func UnpackArchives(sysDir, sys string, spec Spec, runner *actions.Runner, log *
 		if err := unpackOneDisc(sysDir, archivePath, dst, spec); err != nil {
 			log.Errf("%v", err)
 			failed = true
+			continue
 		}
+		unpacked++
 	}
 	if failed {
-		return fmt.Errorf("unpack had failures")
+		return unpacked, fmt.Errorf("unpack had failures")
 	}
-	return nil
+	return unpacked, nil
 }
 
 func unpackOneDisc(sysDir, archivePath, dst string, spec Spec) error {
@@ -149,11 +153,14 @@ func findMarkerDir(root string, spec Spec) (string, error) {
 
 // BuildISOs builds a plain ISO9660 image from every FolderSuffix disc
 // folder in sysDir that matches spec, retiring the folder on success.
-func BuildISOs(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger) error {
+// Returns the number of ISOs successfully built, so callers can report a
+// summary.
+func BuildISOs(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger) (int, error) {
 	entries, err := os.ReadDir(sysDir)
 	if err != nil {
-		return nil
+		return 0, nil
 	}
+	built := 0
 	failed := false
 	for _, e := range entries {
 		if !e.IsDir() || !strings.HasSuffix(e.Name(), spec.FolderSuffix) {
@@ -175,12 +182,14 @@ func BuildISOs(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliut
 		if err := buildOneISO(discDir, iso, part, spec); err != nil {
 			log.Errf("failed, folder kept: %s: %v", discDir, err)
 			failed = true
+			continue
 		}
+		built++
 	}
 	if failed {
-		return fmt.Errorf("iso build had failures")
+		return built, fmt.Errorf("iso build had failures")
 	}
-	return nil
+	return built, nil
 }
 
 func buildOneISO(discDir, iso, part string, spec Spec) error {

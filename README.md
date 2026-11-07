@@ -155,7 +155,7 @@ By default `check` prints a live spinner per category while it runs
 each category scans every system in parallel), then three sections:
 `Checks:` (a one-line tally per category), `Fixes:` (how to resolve what
 was found - one collapsed line per command-backed fix, e.g. "12 finding(s)
--> romctl rename all", since running it fixes every instance; one line per
+-> [romctl rename all]", since running it fixes every instance; one line per
 finding for anything without a command, naming the actual file, e.g.
 "psx bios/scph5501.bin: acquire bios/scph5501.bin and place it in bios/"),
 and the colorized summary. Pass `-v`/`--verbose` to skip the spinners and

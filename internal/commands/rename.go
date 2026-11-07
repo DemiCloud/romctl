@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -17,6 +19,7 @@ import (
 // emulator-resolved set names). See internal/actions.ApplyScheme.
 func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
 	log := cliutil.NewLogger("rename")
+	var renamed, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
 			return
@@ -52,13 +55,16 @@ func Rename(lib *library.Library, runner *actions.Runner, systems []string, sche
 			}
 			if err := actions.RenamePath(src, dst); err != nil {
 				log.Errf("rename failed: %s/%s: %v", sys, base, err)
+				failed.Add(1)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, base, clean+ext); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
+			renamed.Add(1)
 		}
 	})
+	fmt.Printf("rename: %d renamed, %d failed\n", renamed.Load(), failed.Load())
 	return nil
 }
 

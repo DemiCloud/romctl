@@ -132,9 +132,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		}
 	})
 
-	if c, f := converted.Load(), failed.Load(); c+f > 0 {
-		fmt.Printf("chd: %d converted, %d skipped, %d failed\n", c, skipped.Load(), f)
-	}
+	fmt.Printf("chd: %d converted, %d skipped, %d failed\n", converted.Load(), skipped.Load(), failed.Load())
 	return failed.Load() == 0, nil
 }
 

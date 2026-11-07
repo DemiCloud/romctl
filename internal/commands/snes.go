@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -16,6 +18,7 @@ import (
 // SNES strips 512-byte copier headers and renames .smc to .sfc.
 func SNES(lib *library.Library, runner *actions.Runner, systems []string) error {
 	log := cliutil.NewLogger("snes")
+	var processed, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassSNES {
 			return
@@ -49,11 +52,13 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 				}
 				if err := stripSNESHeader(src, out); err != nil {
 					log.Errf("strip header failed: %s/%s: %v", sys, base, err)
+					failed.Add(1)
 					continue
 				}
 				if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
+				processed.Add(1)
 			case src != out:
 				if exists(out) {
 					log.Errf("exists, skipped: %s", out)
@@ -62,15 +67,18 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 				if runner.Act("rename %s/%s -> %s", sys, base, outBase) {
 					if err := os.Rename(src, out); err != nil {
 						log.Errf("rename failed: %s/%s: %v", sys, base, err)
+						failed.Add(1)
 						continue
 					}
 					if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
 						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 					}
+					processed.Add(1)
 				}
 			}
 		}
 	})
+	fmt.Printf("snes: %d processed, %d failed\n", processed.Load(), failed.Load())
 	return nil
 }
 

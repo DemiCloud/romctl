@@ -20,7 +20,7 @@ import (
 // titles dumped before this distinction mattered) as proper DVD-type CHDs.
 func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("dvd")
-	var failed atomic.Bool
+	var converted, failed atomic.Int64
 
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassDVD {
@@ -36,7 +36,7 @@ func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		work, err := os.MkdirTemp("", "romctl-dvd")
 		if err != nil {
 			log.Errf("scratch dir failed: %s: %v", sys, err)
-			failed.Store(true)
+			failed.Add(1)
 			return
 		}
 		defer os.RemoveAll(work)
@@ -55,11 +55,14 @@ func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 			}
 			if err := reencodeAsDVD(path, work); err != nil {
 				log.Errf("failed, original kept: %s: %v", path, err)
-				failed.Store(true)
+				failed.Add(1)
+				continue
 			}
+			converted.Add(1)
 		}
 	})
-	return !failed.Load(), nil
+	fmt.Printf("dvd: %d converted, %d failed\n", converted.Load(), failed.Load())
+	return failed.Load() == 0, nil
 }
 
 func reencodeAsDVD(path, work string) error {

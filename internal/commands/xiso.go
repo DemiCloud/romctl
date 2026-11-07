@@ -82,9 +82,7 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 		}
 	})
 
-	if c, r, f := converted.Load(), renamed.Load(), failed.Load(); c+r+f > 0 {
-		fmt.Printf("xiso: %d converted, %d renamed, %d failed\n", c, r, f)
-	}
+	fmt.Printf("xiso: %d converted, %d renamed, %d failed\n", converted.Load(), renamed.Load(), failed.Load())
 	return failed.Load() == 0, nil
 }
 

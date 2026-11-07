@@ -279,7 +279,7 @@ func (r *Report) Fixes(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Fixes:")
 	for _, fix := range commandOrder {
-		fmt.Fprintf(w, "  %d finding(s) -> %s\n", commandCounts[fix], r.commandHint(fix, "all"))
+		fmt.Fprintf(w, "  %d finding(s) -> [%s]\n", commandCounts[fix], r.commandHint(fix, "all"))
 	}
 	for _, f := range explained {
 		fmt.Fprintf(w, "  %-12s %s: %s\n", f.system, f.path, explain(f.message, f.path))

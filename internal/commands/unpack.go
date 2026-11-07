@@ -20,7 +20,7 @@ import (
 // to promote).
 func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("unpack")
-	var failed atomic.Bool
+	var unpacked, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		switch systemdb.ClassOf(sys) {
 		case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES:
@@ -45,7 +45,7 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			single, err := archive.IsSingleFile(archivePath)
 			if err != nil {
 				log.Errf("unreadable archive: %s", archivePath)
-				failed.Store(true)
+				failed.Add(1)
 				continue
 			}
 			if !single {
@@ -58,15 +58,17 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			newBase, err := unpackOne(sysDir, archivePath)
 			if err != nil {
 				log.Errf("%v", err)
-				failed.Store(true)
+				failed.Add(1)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, e.Name(), newBase); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, e.Name(), err)
 			}
+			unpacked.Add(1)
 		}
 	})
-	return !failed.Load(), nil
+	fmt.Printf("unpack: %d unpacked, %d failed\n", unpacked.Load(), failed.Load())
+	return failed.Load() == 0, nil
 }
 
 func unpackOne(sysDir, archivePath string) (string, error) {

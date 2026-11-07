@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -20,6 +21,7 @@ var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.chd$`)
 // with a playlist, for every system given.
 func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 	log := cliutil.NewLogger("m3u")
+	var grouped, failed atomic.Int64
 	for _, sys := range systems {
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
@@ -58,6 +60,7 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 			}
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				log.Errf("mkdir failed: %s: %v", dir, err)
+				failed.Add(1)
 				continue
 			}
 
@@ -80,13 +83,16 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 			}
 			if err := os.WriteFile(playlist, []byte(data), 0o644); err != nil {
 				log.Errf("writing playlist failed: %s: %v", playlist, err)
+				failed.Add(1)
 				continue
 			}
 			origFirst := filepath.Base(discs[0].path)
 			if err := gamelist.Rename(lib.Root, sys, origFirst, title+".m3u"); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, title, err)
 			}
+			grouped.Add(1)
 		}
 	}
+	fmt.Printf("m3u: %d grouped, %d failed\n", grouped.Load(), failed.Load())
 	return nil
 }

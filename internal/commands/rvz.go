@@ -61,9 +61,7 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		}
 	})
 
-	if c, f := converted.Load(), failed.Load(); c+f > 0 {
-		fmt.Printf("rvz: %d converted, %d failed\n", c, f)
-	}
+	fmt.Printf("rvz: %d converted, %d failed\n", converted.Load(), failed.Load())
 	return failed.Load() == 0, nil
 }
 

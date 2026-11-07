@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -16,6 +18,7 @@ import (
 // N64 normalizes N64 ROMs to big-endian .z64.
 func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 	log := cliutil.NewLogger("n64")
+	var normalized, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassN64 {
 			return
@@ -54,13 +57,16 @@ func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 			}
 			if err := normalizeN64(src, out, order); err != nil {
 				log.Errf("conversion failed: %s/%s: %v", sys, base, err)
+				failed.Add(1)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
+			normalized.Add(1)
 		}
 	})
+	fmt.Printf("n64: %d normalized, %d failed\n", normalized.Load(), failed.Load())
 	return nil
 }
 
