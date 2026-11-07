@@ -133,6 +133,7 @@ regardless of `-v` - that's the point of a dry run.
 | `xiso` | Convert Xbox disc images to XISO: rename an already-valid one, or rebuild a full/redump dump. |
 | `rvz` | Convert GameCube/Wii images to RVZ. |
 | `ps3` | Unpack PS3 archives into disc folders, then build ISOs from them. |
+| `saves` | Move stray save/save-state files out of `roms/` into RetroDECK's own `saves/`/`states/` at the library root. See [Stray save files](#stray-save-files). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation first). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
@@ -188,6 +189,28 @@ It only catches true duplicates - a game present under two different
 region dumps (different hashes, same underlying game) isn't detected;
 doing that precisely needs No-Intro/Redump-style DAT clone-group data,
 which is out of scope for now.
+
+### Stray save files
+
+Many emulators default to writing save/save-state files right next to the
+ROM instead of to RetroDECK's own `saves/`/`states/` directories, so a
+library built up over years - especially one migrated from a standalone
+emulator setup - can end up with thousands of `.sav`/`.srm`/`.sh`/`.state`
+files loose in `roms/`. `check` flags these (`structure`, "does not belong
+in roms/") and collapses them into a single `Fixes:` line rather than one
+per file, since one command fixes every instance:
+
+```
+romctl saves all
+```
+
+This moves each one to `saves/<system>/` (`.sav`/`.srm`/`.sh`) or
+`states/<system>/` (`.state`), creating those directories as needed -
+RetroDECK's own per-system layout since v0.5.0b, so an emulator pointed at
+a standard RetroDECK install picks them up right where it already looks.
+Nothing is ever deleted or overwritten: this is the user's actual save
+data, not a replaceable ROM dump, so a file whose destination already
+exists is left in place untouched.
 
 ## Library conventions
 

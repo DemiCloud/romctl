@@ -23,7 +23,7 @@ import (
 var mutatingCommands = map[string]bool{
 	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
-	"scrape": true,
+	"scrape": true, "saves": true,
 }
 
 var readOnlyCommands = map[string]bool{
@@ -230,6 +230,8 @@ func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems 
 		return commands.RVZ(lib, runner, systems)
 	case "ps3":
 		return commands.PS3(lib, runner, systems, scheme)
+	case "saves":
+		return commands.Saves(lib, runner, systems)
 	case "clean":
 		return true, commands.Clean(lib, runner, systems, assumeYes)
 	case "scrape":
@@ -277,7 +279,7 @@ type cmdInfo struct {
 
 var commandOrder = []string{
 	"check", "bios", "list", "rename", "unpack", "chd", "m3u", "dvd", "n64",
-	"snes", "xiso", "rvz", "ps3", "scrape", "clean", "sync", "systems",
+	"snes", "xiso", "rvz", "ps3", "saves", "scrape", "clean", "sync", "systems",
 }
 
 var commandTable = map[string]cmdInfo{
@@ -294,6 +296,7 @@ var commandTable = map[string]cmdInfo{
 	"xiso":    {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"rvz":     {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"ps3":     {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
+	"saves":   {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"scrape":  {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads}},
 	"clean":   {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes}},
 	"sync":    {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},

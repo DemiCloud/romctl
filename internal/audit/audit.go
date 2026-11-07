@@ -49,6 +49,7 @@ var categoryLabels = map[Category]string{
 var knownFixes = map[string]bool{
 	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
+	"saves": true,
 }
 
 type tally struct{ fail, warn, info int }
@@ -230,9 +231,6 @@ var explanations = []struct {
 	}},
 	{"disc file(s) but", func(p string) string {
 		return fmt.Sprintf("check %s against its actual disc files; counts don't match", p)
-	}},
-	{"does not belong in roms/", func(p string) string {
-		return fmt.Sprintf("move %s out of roms/; it's emulator save/state data, not part of the dump", p)
 	}},
 	{"identical to", func(p string) string {
 		return fmt.Sprintf("remove %s; it's an exact duplicate of another file already kept", p)

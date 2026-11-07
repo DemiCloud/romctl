@@ -211,7 +211,7 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 		return
 	case "sav", "srm", "state", "sh":
 		if class != "" {
-			report.Add(audit.Warn, audit.CategoryStructure, sys, base, "does not belong in roms/", "")
+			report.Add(audit.Warn, audit.CategoryStructure, sys, base, "does not belong in roms/", "saves")
 		}
 		return
 	}

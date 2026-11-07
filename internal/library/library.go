@@ -14,6 +14,12 @@ type Library struct {
 	Root string
 	Roms string
 	Bios string
+	// Saves and States are RetroDECK's own save-data directories,
+	// siblings of Roms/Bios - romctl never reads them, only writes to
+	// them (see commands.Saves, which relocates stray save/state files
+	// out of Roms into their proper per-system subfolder here).
+	Saves  string
+	States string
 }
 
 // Open resolves root into a Library. It does not require bios/ to exist,
@@ -21,9 +27,11 @@ type Library struct {
 func Open(root string) *Library {
 	root = strings.TrimRight(filepath.Clean(root), string(filepath.Separator))
 	return &Library{
-		Root: root,
-		Roms: filepath.Join(root, "roms"),
-		Bios: filepath.Join(root, "bios"),
+		Root:   root,
+		Roms:   filepath.Join(root, "roms"),
+		Bios:   filepath.Join(root, "bios"),
+		Saves:  filepath.Join(root, "saves"),
+		States: filepath.Join(root, "states"),
 	}
 }
 
