@@ -16,14 +16,14 @@ import (
 // N64 normalizes N64 ROMs to big-endian .z64.
 func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 	log := cliutil.NewLogger("n64")
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassN64 {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -60,7 +60,7 @@ func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
 		}
-	}
+	})
 	return nil
 }
 

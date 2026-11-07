@@ -7,14 +7,27 @@ package ttyguard
 
 import (
 	"os"
+	"sync"
 
 	"golang.org/x/term"
+)
+
+// mu, depth and saved coordinate concurrent Save/Restore pairs (romctl's
+// conversion commands now run per-system work in parallel, each wrapping
+// its own external-tool call in one). Only the first concurrent Save
+// actually reads the terminal state - a later one could otherwise capture
+// a sibling call's already-altered raw-mode state instead of the real
+// original - and only the last concurrent Restore to release puts it back.
+var (
+	mu    sync.Mutex
+	depth int
+	saved *term.State
 )
 
 // Guard restores the terminal's state when it goes out of scope. Restore
 // is a no-op if state was never captured (stdin isn't a terminal).
 type Guard struct {
-	state *term.State
+	active bool
 }
 
 // Save captures the current terminal state of stdin, if it is a terminal.
@@ -23,17 +36,30 @@ func Save() *Guard {
 	if !term.IsTerminal(fd) {
 		return &Guard{}
 	}
-	state, err := term.GetState(fd)
-	if err != nil {
-		return &Guard{}
+	mu.Lock()
+	defer mu.Unlock()
+	if depth == 0 {
+		state, err := term.GetState(fd)
+		if err != nil {
+			return &Guard{}
+		}
+		saved = state
 	}
-	return &Guard{state: state}
+	depth++
+	return &Guard{active: true}
 }
 
-// Restore puts the terminal back the way Save found it.
+// Restore puts the terminal back the way Save found it, once every
+// concurrent Save/Restore pair has released.
 func (g *Guard) Restore() {
-	if g.state == nil {
+	if !g.active {
 		return
 	}
-	_ = term.Restore(int(os.Stdin.Fd()), g.state)
+	mu.Lock()
+	depth--
+	last := depth == 0
+	mu.Unlock()
+	if last {
+		_ = term.Restore(int(os.Stdin.Fd()), saved)
+	}
 }

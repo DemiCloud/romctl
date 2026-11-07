@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 // Runner announces or performs a mutating step depending on DryRun.
@@ -35,14 +36,14 @@ func (r *Runner) Act(format string, args ...any) bool {
 
 // retired counts successful Retire calls during this process, for the
 // pending-cleanup note main prints after a mutating run. One romctl
-// invocation runs a single command, so a package-level counter needs no
-// reset and no locking.
-var retired int
+// invocation runs a single command, but conversion commands now run their
+// per-system work concurrently, so this is atomic rather than a plain int.
+var retired atomic.Int64
 
 // RetiredCount reports how many paths Retire has moved to _to_delete/
 // during this process.
 func RetiredCount() int {
-	return retired
+	return int(retired.Load())
 }
 
 // Retire moves path into its directory's _to_delete/, creating it if
@@ -60,6 +61,6 @@ func Retire(path string) error {
 	if err := os.Rename(path, dst); err != nil {
 		return err
 	}
-	retired++
+	retired.Add(1)
 	return nil
 }

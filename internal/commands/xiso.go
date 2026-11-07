@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -24,16 +25,16 @@ import (
 // rewrites it as a trimmed, valid XISO.
 func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("xiso")
-	converted, renamed, failed := 0, 0, 0
+	var converted, renamed, failed atomic.Int64
 
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassXbox {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".iso" {
@@ -55,13 +56,13 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 				if runner.Act("rename %s/%s -> %s", sys, base, filepath.Base(out)) {
 					if err := os.Rename(src, out); err != nil {
 						log.Errf("rename failed: %s: %v", src, err)
-						failed++
+						failed.Add(1)
 						continue
 					}
 					if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
 						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 					}
-					renamed++
+					renamed.Add(1)
 				}
 				continue
 			}
@@ -71,20 +72,20 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 			}
 			if err := convertToXISO(src, out); err != nil {
 				log.Errf("not an XISO, skipped: %s: %v", src, err)
-				failed++
+				failed.Add(1)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
-			converted++
+			converted.Add(1)
 		}
-	}
+	})
 
-	if converted+renamed+failed > 0 {
-		fmt.Printf("xiso: %d converted, %d renamed, %d failed\n", converted, renamed, failed)
+	if c, r, f := converted.Load(), renamed.Load(), failed.Load(); c+r+f > 0 {
+		fmt.Printf("xiso: %d converted, %d renamed, %d failed\n", c, r, f)
 	}
-	return failed == 0, nil
+	return failed.Load() == 0, nil
 }
 
 // convertToXISO rebuilds a full/redump Xbox disc image in place via

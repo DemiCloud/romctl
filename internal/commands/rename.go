@@ -17,14 +17,14 @@ import (
 // emulator-resolved set names). See internal/actions.ApplyScheme.
 func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
 	log := cliutil.NewLogger("rename")
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -58,7 +58,7 @@ func Rename(lib *library.Library, runner *actions.Runner, systems []string, sche
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
 		}
-	}
+	})
 	return nil
 }
 

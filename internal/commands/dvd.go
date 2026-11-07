@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -19,23 +20,27 @@ import (
 // titles dumped before this distinction mattered) as proper DVD-type CHDs.
 func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("dvd")
-	failed := false
+	var failed atomic.Bool
 
-	work, err := os.MkdirTemp("", "romctl-dvd")
-	if err != nil {
-		return false, err
-	}
-	defer os.RemoveAll(work)
-
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassDVD {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
+		// Each system gets its own scratch directory - the previous shared
+		// one assumed a single sequential caller.
+		work, err := os.MkdirTemp("", "romctl-dvd")
+		if err != nil {
+			log.Errf("scratch dir failed: %s: %v", sys, err)
+			failed.Store(true)
+			return
+		}
+		defer os.RemoveAll(work)
+
 		for _, e := range entries {
 			if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".chd" {
 				continue
@@ -50,11 +55,11 @@ func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 			}
 			if err := reencodeAsDVD(path, work); err != nil {
 				log.Errf("failed, original kept: %s: %v", path, err)
-				failed = true
+				failed.Store(true)
 			}
 		}
-	}
-	return !failed, nil
+	})
+	return !failed.Load(), nil
 }
 
 func reencodeAsDVD(path, work string) error {

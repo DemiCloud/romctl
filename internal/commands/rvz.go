@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -18,16 +19,16 @@ import (
 // RVZ converts GameCube/Wii images to Dolphin's native RVZ format.
 func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("rvz")
-	converted, failed := 0, 0
+	var converted, failed atomic.Int64
 
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassDolphin {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		names := entryNames(entries)
 		var candidates []string
@@ -49,21 +50,21 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 			}
 			if err := convertToRVZ(path, out); err != nil {
 				log.Errf("failed, source kept: %s: %v", path, err)
-				failed++
+				failed.Add(1)
 				continue
 			}
 			_ = actions.Retire(path)
 			if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
-			converted++
+			converted.Add(1)
 		}
-	}
+	})
 
-	if converted+failed > 0 {
-		fmt.Printf("rvz: %d converted, %d failed\n", converted, failed)
+	if c, f := converted.Load(), failed.Load(); c+f > 0 {
+		fmt.Printf("rvz: %d converted, %d failed\n", c, f)
 	}
-	return failed == 0, nil
+	return failed.Load() == 0, nil
 }
 
 func convertToRVZ(in, out string) error {

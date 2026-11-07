@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/version"
 )
@@ -62,9 +63,18 @@ func platformDir() string {
 	return runtime.GOOS + "_" + runtime.GOARCH
 }
 
+// extractMu serializes extractToCache: conversion commands now call
+// Resolve concurrently (one goroutine per system), and two goroutines
+// racing to extract the same not-yet-cached tool would otherwise write the
+// same PID-keyed temp path at once.
+var extractMu sync.Mutex
+
 // extractToCache writes data to $cache/romctl/tools/<version>/<name>,
 // skipping the write if a same-sized copy is already there.
 func extractToCache(name string, data []byte) (string, error) {
+	extractMu.Lock()
+	defer extractMu.Unlock()
+
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return "", err

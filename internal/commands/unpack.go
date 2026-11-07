@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/archive"
@@ -19,17 +20,17 @@ import (
 // to promote).
 func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	log := cliutil.NewLogger("unpack")
-	failed := false
-	for _, sys := range systems {
+	var failed atomic.Bool
+	cliutil.Parallel(systems, func(sys string) {
 		switch systemdb.ClassOf(sys) {
 		case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES:
 		default:
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -44,7 +45,7 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			single, err := archive.IsSingleFile(archivePath)
 			if err != nil {
 				log.Errf("unreadable archive: %s", archivePath)
-				failed = true
+				failed.Store(true)
 				continue
 			}
 			if !single {
@@ -57,15 +58,15 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			newBase, err := unpackOne(sysDir, archivePath)
 			if err != nil {
 				log.Errf("%v", err)
-				failed = true
+				failed.Store(true)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, e.Name(), newBase); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, e.Name(), err)
 			}
 		}
-	}
-	return !failed, nil
+	})
+	return !failed.Load(), nil
 }
 
 func unpackOne(sysDir, archivePath string) (string, error) {

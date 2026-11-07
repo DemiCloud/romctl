@@ -16,14 +16,14 @@ import (
 // SNES strips 512-byte copier headers and renames .smc to .sfc.
 func SNES(lib *library.Library, runner *actions.Runner, systems []string) error {
 	log := cliutil.NewLogger("snes")
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) != systemdb.ClassSNES {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -70,7 +70,7 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 				}
 			}
 		}
-	}
+	})
 	return nil
 }
 

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -19,19 +20,19 @@ import (
 // resulting ISO's name; see internal/actions.ApplyScheme.
 func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	log := cliutil.NewLogger("ps3")
-	failed := false
-	for _, sys := range systems {
+	var failed atomic.Bool
+	cliutil.Parallel(systems, func(sys string) {
 		spec, ok := discimage.SpecFor(systemdb.ClassOf(sys))
 		if !ok {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		if err := discimage.UnpackArchives(sysDir, sys, spec, runner, log, scheme); err != nil {
-			failed = true
+			failed.Store(true)
 		}
 		if err := discimage.BuildISOs(sysDir, sys, spec, runner, log); err != nil {
-			failed = true
+			failed.Store(true)
 		}
-	}
-	return !failed, nil
+	})
+	return !failed.Load(), nil
 }

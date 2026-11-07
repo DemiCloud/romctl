@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/archive"
@@ -25,17 +26,17 @@ import (
 // internal/actions.ApplyScheme.
 func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	log := cliutil.NewLogger("chd")
-	converted, skipped, failed := 0, 0, 0
+	var converted, skipped, failed atomic.Int64
 
-	for _, sys := range systems {
+	cliutil.Parallel(systems, func(sys string) {
 		class := systemdb.ClassOf(sys)
 		if class != systemdb.ClassCD && class != systemdb.ClassDVD && class != systemdb.ClassUMD {
-			continue
+			return
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			continue
+			return
 		}
 		names := entryNames(entries)
 		total := len(names)
@@ -59,7 +60,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				newName, err := convertGameDir(class, sysDir, path, title)
 				if err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed++
+					failed.Add(1)
 					continue
 				}
 				if err := actions.Retire(path); err != nil {
@@ -68,7 +69,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
-				converted++
+				converted.Add(1)
 				continue
 			}
 
@@ -77,7 +78,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 			switch ext {
 			case ".cso":
 				if exists(dest) {
-					skipped++
+					skipped.Add(1)
 					continue
 				}
 				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
@@ -85,17 +86,17 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				}
 				if err := csoToCHD(path, dest); err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed++
+					failed.Add(1)
 					continue
 				}
 				_ = actions.Retire(path)
 				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
-				converted++
+				converted.Add(1)
 			case ".cue", ".gdi", ".iso":
 				if exists(dest) {
-					skipped++
+					skipped.Add(1)
 					continue
 				}
 				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
@@ -104,14 +105,14 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				mode := chdMode(class, path)
 				if err := makeCHD(mode, path, dest); err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed++
+					failed.Add(1)
 					continue
 				}
 				_ = actions.Retire(path)
 				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
-				converted++
+				converted.Add(1)
 			case ".zip", ".7z", ".rar":
 				if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
 					continue
@@ -119,22 +120,22 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				newName, err := extractAndConvert(class, sysDir, path, title)
 				if err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed++
+					failed.Add(1)
 					continue
 				}
 				_ = actions.Retire(path)
 				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
-				converted++
+				converted.Add(1)
 			}
 		}
-	}
+	})
 
-	if converted+failed > 0 {
-		fmt.Printf("chd: %d converted, %d skipped, %d failed\n", converted, skipped, failed)
+	if c, f := converted.Load(), failed.Load(); c+f > 0 {
+		fmt.Printf("chd: %d converted, %d skipped, %d failed\n", c, skipped.Load(), f)
 	}
-	return failed == 0, nil
+	return failed.Load() == 0, nil
 }
 
 func entryNames(entries []os.DirEntry) []string {
