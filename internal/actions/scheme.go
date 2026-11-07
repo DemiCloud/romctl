@@ -28,11 +28,13 @@ const (
 )
 
 // ParseScheme validates s against the known schemes (case-insensitive); ""
-// means SchemeNoTag, romctl's default.
+// means SchemeKeep, romctl's default - leave naming exactly as found unless
+// a scheme is explicitly requested, so romctl never rewrites a library's
+// filenames by surprise.
 func ParseScheme(s string) (Scheme, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "":
-		return SchemeNoTag, nil
+		return SchemeKeep, nil
 	case string(SchemeNoTag):
 		return SchemeNoTag, nil
 	case string(SchemeKeep):

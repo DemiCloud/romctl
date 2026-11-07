@@ -4,7 +4,7 @@ import "testing"
 
 func TestParseScheme(t *testing.T) {
 	cases := map[string]Scheme{
-		"":          SchemeNoTag,
+		"":          SchemeKeep,
 		"notag":     SchemeNoTag,
 		"NOTAG":     SchemeNoTag,
 		"keep":      SchemeKeep,
