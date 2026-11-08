@@ -20,6 +20,8 @@ func List(lib *library.Library, systems []string, showGames bool) error {
 		games  []string
 	}
 
+	esdeNames, _ := lib.ESDESystems()
+
 	var results []populated
 	for _, sys := range systems {
 		games, err := gameTitles(filepath.Join(lib.Roms, sys))
@@ -29,11 +31,11 @@ func List(lib *library.Library, systems []string, showGames bool) error {
 		results = append(results, populated{system: sys, games: games})
 	}
 	sort.Slice(results, func(i, j int) bool {
-		return systemdb.DisplayName(results[i].system) < systemdb.DisplayName(results[j].system)
+		return systemdb.DisplayNameWith(results[i].system, esdeNames) < systemdb.DisplayNameWith(results[j].system, esdeNames)
 	})
 
 	for _, r := range results {
-		fmt.Printf("%-40s %-18s %4d game(s)\n", systemdb.DisplayName(r.system), "("+r.system+")", len(r.games))
+		fmt.Printf("%-40s %-18s %4d game(s)\n", systemdb.DisplayNameWith(r.system, esdeNames), "("+r.system+")", len(r.games))
 		if !showGames {
 			continue
 		}

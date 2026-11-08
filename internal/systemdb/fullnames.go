@@ -57,6 +57,18 @@ var FullName = map[string]string{
 // DisplayName returns the human-readable name for system, falling back to
 // the directory name itself when it isn't a known system.
 func DisplayName(system string) string {
+	return DisplayNameWith(system, nil)
+}
+
+// DisplayNameWith is DisplayName, but preferring overrides first (e.g. a
+// library's own library.Library.ESDESystems, which reflects the actually
+// installed RetroDECK version rather than whichever one FullName was last
+// hand-ported from). A nil or non-matching overrides falls through to
+// DisplayName's own behavior.
+func DisplayNameWith(system string, overrides map[string]string) string {
+	if name, ok := overrides[system]; ok {
+		return name
+	}
 	if name, ok := FullName[system]; ok {
 		return name
 	}

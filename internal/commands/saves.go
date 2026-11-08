@@ -2,10 +2,8 @@ package commands
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,20 +26,6 @@ var saveExtSubdir = map[string]string{
 	"state": "states",
 }
 
-// saveConflict records a stray file left in place because something
-// already occupies its destination - printed as its own section so the
-// user can tell at a glance whether it's safe to just delete one copy
-// (identical) or needs a manual look (different content, or either side
-// unreadable).
-type saveConflict struct {
-	sys, name        string
-	srcDir, dstDir   string
-	srcSize, dstSize int64
-	srcMod, dstMod   time.Time
-	identical        bool
-	compareErr       bool
-}
-
 // Saves relocates stray save/save-state files out of roms/<system>/ into
 // saves/<system>/ or states/<system>/, under the library root by default
 // or under dest if set (e.g. to keep save data somewhere other than the
@@ -62,7 +46,7 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 	}
 	var moved, failed atomic.Int64
 	var mu sync.Mutex
-	var conflicts []saveConflict
+	var conflicts []fileConflict
 
 	cliutil.Parallel(systems, func(sys string) {
 		sysDir := filepath.Join(lib.Roms, sys)
@@ -84,7 +68,7 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 			destDir := filepath.Join(destRoot, subdir, sys)
 			dst := filepath.Join(destDir, base)
 			if exists(dst) {
-				c := compareSaveConflict(sys, base, filepath.Join("roms", sys), filepath.Join(subdir, sys), src, dst)
+				c := compareFileConflict(sys, base, filepath.Join("roms", sys), filepath.Join(subdir, sys), src, dst)
 				mu.Lock()
 				conflicts = append(conflicts, c)
 				mu.Unlock()
@@ -108,73 +92,6 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 	})
 
 	fmt.Printf("saves: %d moved, %d conflicts, %d failed in %s\n", moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second))
-	printSaveConflicts(os.Stdout, conflicts)
+	printFileConflicts(os.Stdout, conflicts)
 	return failed.Load() == 0, nil
-}
-
-// compareSaveConflict stats and, size permitting, content-compares src
-// and dst (already known to both exist) so printSaveConflicts can tell
-// the user whether the stray copy in roms/ is safe to discard or needs a
-// manual look.
-func compareSaveConflict(sys, name, srcLabel, dstLabel, src, dst string) saveConflict {
-	c := saveConflict{sys: sys, name: name, srcDir: srcLabel, dstDir: dstLabel}
-	srcInfo, srcErr := os.Stat(src)
-	dstInfo, dstErr := os.Stat(dst)
-	if srcErr != nil || dstErr != nil {
-		c.compareErr = true
-		return c
-	}
-	c.srcSize, c.srcMod = srcInfo.Size(), srcInfo.ModTime()
-	c.dstSize, c.dstMod = dstInfo.Size(), dstInfo.ModTime()
-	if c.srcSize != c.dstSize {
-		return c
-	}
-	// Save/state files are small (KB, rarely multi-MB), so a CRC32 of
-	// each - same check checkDuplicates uses for exact-duplicate
-	// detection elsewhere - is cheap here even run per conflict.
-	srcSum, err := crc32File(src)
-	if err != nil {
-		c.compareErr = true
-		return c
-	}
-	dstSum, err := crc32File(dst)
-	if err != nil {
-		c.compareErr = true
-		return c
-	}
-	c.identical = srcSum == dstSum
-	return c
-}
-
-// printSaveConflicts lists every stray file left in roms/ because its
-// destination was already occupied, each with both copies' size and
-// modification time so the user can judge which one to keep.
-func printSaveConflicts(w io.Writer, conflicts []saveConflict) {
-	if len(conflicts) == 0 {
-		return
-	}
-	sort.Slice(conflicts, func(i, j int) bool {
-		if conflicts[i].sys != conflicts[j].sys {
-			return conflicts[i].sys < conflicts[j].sys
-		}
-		return conflicts[i].name < conflicts[j].name
-	})
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Conflicts (destination already exists; left in roms/ untouched):")
-	const timeFmt = "2006-01-02 15:04"
-	for _, c := range conflicts {
-		if c.compareErr {
-			fmt.Fprintf(w, "  %-10s %-32s %s vs %s: could not compare\n", c.sys, c.name, c.srcDir, c.dstDir)
-			continue
-		}
-		status := "DIFFERENT - resolve manually"
-		if c.identical {
-			status = "identical, safe to delete either copy"
-		}
-		fmt.Fprintf(w, "  %-10s %-32s %s: %s, %s   vs   %s: %s, %s   [%s]\n",
-			c.sys, c.name,
-			c.srcDir, humanSize(c.srcSize), c.srcMod.Format(timeFmt),
-			c.dstDir, humanSize(c.dstSize), c.dstMod.Format(timeFmt),
-			status)
-	}
 }

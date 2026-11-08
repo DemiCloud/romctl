@@ -14,6 +14,7 @@ import (
 	"github.com/demicloud/romctl/internal/formats/chd"
 	"github.com/demicloud/romctl/internal/formats/iso9660"
 	"github.com/demicloud/romctl/internal/formats/n64"
+	"github.com/demicloud/romctl/internal/formats/signature"
 	"github.com/demicloud/romctl/internal/formats/snes"
 	"github.com/demicloud/romctl/internal/formats/xiso"
 	"github.com/demicloud/romctl/internal/library"
@@ -39,11 +40,13 @@ func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Sc
 	cliutil.RunPhase(verbose, "naming (tags, articles)", func() {
 		cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
 	})
+	esdeNames, _ := lib.ESDESystems()
 	cliutil.RunPhase(verbose, "structure (leftovers, playlists)", func() {
 		cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
+		checkUnknownSystems(report, lib, systems)
 	})
 	cliutil.RunPhase(verbose, "containers (formats, conversions)", func() {
-		cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys) })
+		cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys, esdeNames) })
 	})
 	cliutil.RunPhase(verbose, "bios (presence, hashes)", func() {
 		checkBios(report, lib, systems)
@@ -196,6 +199,31 @@ func checkM3uDir(report *audit.Report, sys, dirPath string) {
 	}
 }
 
+// checkUnknownSystems flags a roms/<dir> that neither romctl's own
+// systemdb.SystemClass nor the install's own ES-DE-generated systems.txt
+// recognizes at all - most likely a typo'd directory name or a leftover
+// from a system that's since been removed. Only runs when systems.txt is
+// present: systemdb.SystemClass alone can't make this call reliably on
+// its own, since it's a hand-ported subset and a directory it doesn't
+// know about might still be a perfectly legitimate, newer RetroDECK
+// system that just hasn't been added to it yet.
+func checkUnknownSystems(report *audit.Report, lib *library.Library, systems []string) {
+	esdeNames, ok := lib.ESDESystems()
+	if !ok {
+		return
+	}
+	for _, sys := range systems {
+		if _, known := systemdb.SystemClass[sys]; known {
+			continue
+		}
+		if _, known := esdeNames[sys]; known {
+			continue
+		}
+		report.Add(audit.Warn, audit.CategoryStructure, sys, "roms/"+sys,
+			"not a system directory RetroDECK or romctl recognizes", "")
+	}
+}
+
 var discTagRE = regexp.MustCompile(`\(Disc \d+\)`)
 
 func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
@@ -225,7 +253,7 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 	}
 }
 
-func checkContainers(report *audit.Report, lib *library.Library, sys string) {
+func checkContainers(report *audit.Report, lib *library.Library, sys string, esdeNames map[string]string) {
 	class := systemdb.ClassOf(sys)
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)
@@ -241,7 +269,7 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string) {
 		if e.IsDir() {
 			checkContainerDir(report, sys, class, path)
 		} else {
-			checkContainerFile(report, sys, class, path)
+			checkContainerFile(report, sys, class, path, esdeNames)
 		}
 	}
 }
@@ -268,7 +296,7 @@ func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, d
 	}
 }
 
-func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
+func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath string, esdeNames map[string]string) {
 	base := filepath.Base(filePath)
 	if isLeftoverInfix(base) {
 		return // checkStructureFile's territory
@@ -276,6 +304,21 @@ func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
 	if nonROMExts[ext] {
 		return
+	}
+
+	// Checked ahead of (and independent from) the extension-keyed switch
+	// below, so it still catches a lone, cue-less .bin that the switch's
+	// own "cd:bin"/"cd:img" case would otherwise return out of silently -
+	// exactly the shape of the real misfiled Genesis cartridge ROM this
+	// check exists to catch. Bare files only; archive contents aren't
+	// inspected here (see check's own --dupes cost tradeoff) - a misfiled
+	// ROM still inside an archive is instead named by chd/unpack's own
+	// conversion errors.
+	if class != systemdb.ClassArcade {
+		if fam, ok := signature.Identify(filePath); ok && !signature.ValidFor(fam, sys) {
+			report.Add(audit.Warn, audit.CategoryContainers, sys, base,
+				fmt.Sprintf("identifies as a %s ROM, not %s", signature.Name[fam], systemdb.DisplayNameWith(sys, esdeNames)), "relocate")
+		}
 	}
 
 	key := string(class) + ":" + ext

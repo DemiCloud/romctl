@@ -79,6 +79,33 @@ func (l *Library) ResolveSystems(args []string) ([]string, error) {
 	return systems, nil
 }
 
+// ESDESystems reads <Root>/systems.txt - a convenience file ES-DE itself
+// generates (one line per system, "<dir>: <full name>") straight from
+// RetroDECK's own bundled es_systems.xml, listing every system that
+// version of RetroDECK knows about. Unlike systemdb.FullName (hand-ported
+// and can drift from whatever RetroDECK version is actually installed),
+// this reflects the real, current list - so callers prefer it when
+// present. ok is false (not an error) when the file doesn't exist: ES-DE
+// only generates it on demand, so "absent" just means "nothing to
+// cross-check against," the same way gamelist treats a missing ES-DE/ as
+// a no-op rather than a failure.
+func (l *Library) ESDESystems() (map[string]string, bool) {
+	data, err := os.ReadFile(filepath.Join(l.Root, "systems.txt"))
+	if err != nil {
+		return nil, false
+	}
+	out := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		dir, name, ok := strings.Cut(line, ": ")
+		if !ok {
+			continue
+		}
+		out[dir] = name
+	}
+	return out, len(out) > 0
+}
+
 // HasGames reports whether a system directory holds any game entries,
 // ignoring systeminfo.txt, other .txt files, _to_delete, and .directory.
 func HasGames(sysDir string) bool {

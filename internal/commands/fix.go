@@ -21,7 +21,9 @@ type fixStep struct {
 }
 
 // fixSteps lists, in order, every local normalization command Fix chains:
-// unpack first so n64/snes/chd see already-extracted files, convert disc
+// relocate misfiled cartridge ROMs first (so a Genesis ROM sitting in
+// roms/segacd/ gets out of the way before chd ever has to fail on it),
+// then unpack so n64/snes/chd see already-extracted files, convert disc
 // images to their emulator-native containers, group any loose multi-disc
 // CHDs that convert didn't already group itself, apply the naming scheme
 // last (once every file has settled into its final extension), then
@@ -30,6 +32,7 @@ type fixStep struct {
 // not an implicit side effect of "fix everything local".
 func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, savesDest string) []fixStep {
 	return []fixStep{
+		{"relocate", func() (bool, error) { return Relocate(lib, runner, systems) }},
 		{"unpack", func() (bool, error) { return Unpack(lib, runner, systems) }},
 		{"chd", func() (bool, error) { return CHD(lib, runner, systems, scheme) }},
 		{"dvd", func() (bool, error) { return DVD(lib, runner, systems) }},

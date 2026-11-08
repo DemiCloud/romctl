@@ -132,8 +132,8 @@ disk when it isn't safe to use.
 |---|---|
 | `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. |
 | `bios` | Audit BIOS files only. |
-| `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
-| `fix` | Run every local fix step below in order (`unpack`, `chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
+| `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
+| `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge systems. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. |
@@ -145,6 +145,7 @@ disk when it isn't safe to use.
 | `rvz` | Convert GameCube/Wii images to RVZ. |
 | `ps3` | Unpack PS3 archives into disc folders, then build ISOs from them. |
 | `saves` | Move stray save/save-state files out of `roms/` into RetroDECK's own `saves/`/`states/` at the library root. See [Stray save files](#stray-save-files). |
+| `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation first). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
@@ -232,10 +233,62 @@ conflict is reported at the end instead, with both copies' size and
 modification time and whether their content actually matches:
 
 ```
-Conflicts (destination already exists; left in roms/ untouched):
+Conflicts (destination already exists; left in place untouched):
   n64   Game.srm   roms/n64: 83.0KiB, 2026-09-01 14:03   vs   saves/n64: 83.0KiB, 2026-09-01 14:03   [identical, safe to delete either copy]
   snes  Zelda.srm  roms/snes: 2.0KiB, 2026-01-02 11:00   vs   saves/snes: 2.1KiB, 2025-11-20 08:40   [DIFFERENT - resolve manually]
 ```
+
+### Misfiled ROMs
+
+A ROM dropped into the wrong system's directory - the actual trigger for
+this feature: a Genesis cartridge ROM zipped up alone with no
+`.cue`/`.gdi`/`.iso`, sitting in `roms/segacd/` - fails confusingly rather
+than obviously: `chd` can only report "no cue/gdi/iso in: ..." for it,
+with nothing pointing at the real problem. `check` identifies a cartridge/
+handheld ROM by its own header bytes (not its extension or which directory
+it happens to be in), the same magic offsets maintained by the
+[`file(1)`/libmagic project](https://github.com/file/file) rather than
+guessed, and flags one that doesn't match the system it's actually sitting
+in:
+
+```
+romctl relocate all
+```
+
+This moves each one into its correct system directory - e.g. out of
+`roms/segacd/` into `roms/genesis/`. Coverage is deliberately partial:
+only formats with a strong, unambiguous signature are recognized (NES,
+Famicom Disk System, Game Boy/Color, Game Boy Advance, N64, Genesis/Mega
+Drive, Sega 32X, Sega Master System, Game Gear, Atari Lynx, Neo Geo
+Pocket) - most pre-16-bit cartridge systems have no reliable header at
+all, and SNES's own header check is a weak heuristic even in `file(1)`
+itself, so neither is guessed at. Only bare files are checked, not archive
+contents - a misfiled ROM still inside an archive is instead named by
+`chd`/`unpack`'s own conversion errors, as above.
+
+Like stray saves, nothing is ever overwritten: a destination that already
+exists is left in both places and reported as a conflict instead, with
+the same size/modification-time/content comparison shown above.
+
+### systems.txt cross-check
+
+ES-DE itself generates a `systems.txt` at the library root (one line per
+system, `<dir>: <full name>`) the first time it builds out the ROM
+directory tree - a convenience file for users, straight from whatever
+RetroDECK version is actually installed. When it's present, romctl
+prefers it over its own hand-ported system-name table (`list`'s full
+names) and uses it to flag a `roms/<dir>/` that neither romctl nor that
+install's own system list recognizes at all - most likely a typo or a
+leftover from a system you no longer use:
+
+```
+WARN  totally-bogus-system  roms/totally-bogus-system: not a system directory RetroDECK or romctl recognizes
+```
+
+This finding only fires when `systems.txt` exists: romctl's own system
+table is a hand-ported subset, so without something to cross-check
+against, an unrecognized directory could just as easily be a newer
+RetroDECK system romctl hasn't been updated for yet.
 
 ## Library conventions
 

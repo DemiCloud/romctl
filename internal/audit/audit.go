@@ -49,7 +49,7 @@ var categoryLabels = map[Category]string{
 var knownFixes = map[string]bool{
 	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
-	"saves": true,
+	"saves": true, "relocate": true,
 }
 
 type tally struct{ fail, warn, info int }
@@ -234,6 +234,9 @@ var explanations = []struct {
 	}},
 	{"identical to", func(p string) string {
 		return fmt.Sprintf("remove %s; it's an exact duplicate of another file already kept", p)
+	}},
+	{"not a system directory", func(p string) string {
+		return fmt.Sprintf("check %s for a typo, or remove it if it's an old/unused system", p)
 	}},
 }
 

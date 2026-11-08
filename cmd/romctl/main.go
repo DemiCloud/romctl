@@ -23,7 +23,7 @@ import (
 var mutatingCommands = map[string]bool{
 	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
-	"scrape": true, "saves": true, "fix": true,
+	"scrape": true, "saves": true, "relocate": true, "fix": true,
 }
 
 var readOnlyCommands = map[string]bool{
@@ -238,6 +238,8 @@ func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems 
 		return commands.PS3(lib, runner, systems, scheme)
 	case "saves":
 		return commands.Saves(lib, runner, systems, savesDest)
+	case "relocate":
+		return commands.Relocate(lib, runner, systems)
 	case "clean":
 		return true, commands.Clean(lib, runner, systems, assumeYes)
 	case "scrape":
@@ -286,29 +288,30 @@ type cmdInfo struct {
 
 var commandOrder = []string{
 	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "dvd", "n64",
-	"snes", "xiso", "rvz", "ps3", "saves", "scrape", "clean", "sync", "systems",
+	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems",
 }
 
 var commandTable = map[string]cmdInfo{
-	"check":   {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme}},
-	"bios":    {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
-	"list":    {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
-	"fix":     {"run every local fix step: unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest}},
-	"rename":  {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"unpack":  {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"chd":     {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"m3u":     {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"dvd":     {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"n64":     {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"snes":    {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"xiso":    {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"rvz":     {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"ps3":     {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"saves":   {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest}},
-	"scrape":  {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads}},
-	"clean":   {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes}},
-	"sync":    {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
-	"systems": {"list every known system and its class (not just populated ones)", "", nil},
+	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme}},
+	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
+	"list":     {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
+	"fix":      {"run every local fix step: relocate, unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest}},
+	"rename":   {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
+	"unpack":   {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"chd":      {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
+	"m3u":      {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"dvd":      {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"n64":      {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"snes":     {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"xiso":     {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"rvz":      {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"ps3":      {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
+	"saves":    {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest}},
+	"relocate": {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
+	"scrape":   {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads}},
+	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes}},
+	"sync":     {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
+	"systems":  {"list every known system and its class (not just populated ones)", "", nil},
 }
 
 func usage() {

@@ -15,6 +15,7 @@ import (
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/executil"
 	"github.com/demicloud/romctl/internal/formats/cso"
+	"github.com/demicloud/romctl/internal/formats/signature"
 	"github.com/demicloud/romctl/internal/gamelist"
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
@@ -311,6 +312,27 @@ func csoToCHD(csoPath, out string) error {
 	return makeCHD("dvd", isoPath, out)
 }
 
+// cartridgeHint checks dir's loose .bin files (the ones left unaccounted
+// for once cue/gdi/iso search comes up empty) for a known cartridge/
+// handheld ROM signature (see internal/formats/signature). A redump/
+// no-intro CD dump's .bin always has a matching .cue; a lone .bin with
+// none is far more often a cartridge ROM that got misfiled into a
+// CD-class system's directory than an actual cue-less disc dump, so this
+// turns chd's otherwise-opaque "no cue/gdi/iso" error into one that names
+// the real problem.
+func cartridgeHint(dir string) string {
+	bins, err := findByExt(dir, ".bin")
+	if err != nil {
+		return ""
+	}
+	for _, b := range bins {
+		if fam, ok := signature.Identify(b); ok {
+			return fmt.Sprintf("%s is a %s ROM, not a disc image - move it to the correct system", filepath.Base(b), signature.Name[fam])
+		}
+	}
+	return ""
+}
+
 // convertGameDir converts a directory of disc images (one game) to one or
 // more CHDs, grouping multi-disc games into a Title.m3u/ directory. It
 // returns the resulting top-level name under sysDir ("<title>.chd" or
@@ -328,6 +350,9 @@ func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, er
 	}
 	sort.Strings(imgs)
 	if len(imgs) == 0 {
+		if hint := cartridgeHint(dir); hint != "" {
+			return "", fmt.Errorf("no cue/gdi/iso in: %s (%s)", dir, hint)
+		}
 		return "", fmt.Errorf("no cue/gdi/iso in: %s", dir)
 	}
 

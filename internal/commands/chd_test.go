@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/demicloud/romctl/internal/systemdb"
 )
 
 // TestFindByExtRecursesIntoSubfolders guards against a regression: many
@@ -66,5 +69,27 @@ func TestFindByExtMultiDisc(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("findByExt = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestConvertGameDirNamesMisfiledCartridgeROM guards against a real
+// support report: a Genesis/Mega Drive cartridge ROM archived as a lone
+// .bin (no .cue/.gdi/.iso) sitting in a CD-class system's directory (e.g.
+// roms/segacd/) used to fail with an opaque "no cue/gdi/iso in: <dir>",
+// giving no clue that the file doesn't belong there at all.
+func TestConvertGameDirNamesMisfiledCartridgeROM(t *testing.T) {
+	dir := t.TempDir()
+	data := make([]byte, 0x200)
+	copy(data[0x100:], "SEGA MEGA DRIVE ")
+	if err := os.WriteFile(filepath.Join(dir, "ALTERED_.bin"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := convertGameDir(systemdb.ClassCD, dir, dir, "ALTERED_")
+	if err == nil {
+		t.Fatal("convertGameDir succeeded, want an error naming the misfiled ROM")
+	}
+	if !strings.Contains(err.Error(), "Genesis/Mega Drive ROM") {
+		t.Fatalf("convertGameDir error = %q, want it to name the cartridge ROM", err)
 	}
 }
