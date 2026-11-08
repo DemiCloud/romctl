@@ -20,13 +20,12 @@ func newCheckCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dupes, _ := cmd.Flags().GetBool("dupes")
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			scheme, err := resolveScheme(cmd)
 			if err != nil {
 				return err
 			}
-			ok, err := commands.Check(appCtx.lib, systems, dupes, scheme, verbose, appCtx.format, appCtx.rootHint)
+			ok, err := commands.Check(appCtx.lib, systems, scheme, verbose, appCtx.format, appCtx.rootHint)
 			if err != nil {
 				return err
 			}
@@ -36,7 +35,6 @@ func newCheckCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("dupes", false, "")
 	cmd.Flags().String("scheme", "", "")
 	return cmd
 }

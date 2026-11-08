@@ -93,7 +93,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
 					return
 				}
-				newName, err := convertGameDir(class, sysDir, path, title)
+				newName, err := convertGameDir(sys, class, sysDir, path, title)
 				if err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
 					failed.Add(1)
@@ -135,6 +135,11 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 					skipped.Add(1)
 					return
 				}
+				if msg := signatureMismatch(sys, path); msg != "" {
+					log.Errf("%s", msg)
+					failed.Add(1)
+					return
+				}
 				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
 					return
 				}
@@ -153,7 +158,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 				if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
 					return
 				}
-				newName, err := extractAndConvert(class, sysDir, path, title)
+				newName, err := extractAndConvert(sys, class, sysDir, path, title)
 				if err != nil {
 					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
 					failed.Add(1)
@@ -411,8 +416,8 @@ func cartridgeHint(dir string) string {
 // convertGameDir converts a directory of disc images (one game) to one or
 // more CHDs, grouping multi-disc games into a Title.m3u/ directory. It
 // returns the resulting top-level name under sysDir ("<title>.chd" or
-// "<title>.m3u").
-func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, error) {
+// "<title>.m3u"). sys is only needed for signatureMismatch.
+func convertGameDir(sys string, class systemdb.Class, sysDir, dir, title string) (string, error) {
 	imgs, err := findByExt(dir, ".cue", ".gdi")
 	if err != nil {
 		return "", err
@@ -436,6 +441,9 @@ func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, er
 		if exists(out) {
 			return "", fmt.Errorf("exists, skipped: %s", out)
 		}
+		if msg := signatureMismatch(sys, imgs[0]); msg != "" {
+			return "", fmt.Errorf("%s", msg)
+		}
 		if err := makeCHD(chdMode(class, imgs[0]), imgs[0], out); err != nil {
 			return "", err
 		}
@@ -451,6 +459,10 @@ func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, er
 	}
 	var playlist []string
 	for n, img := range imgs {
+		if msg := signatureMismatch(sys, img); msg != "" {
+			os.RemoveAll(m3uDir)
+			return "", fmt.Errorf("%s", msg)
+		}
 		disc := fmt.Sprintf("%s (Disc %02d).chd", title, n+1)
 		if err := makeCHD(chdMode(class, img), img, filepath.Join(m3uDir, disc)); err != nil {
 			os.RemoveAll(m3uDir)
@@ -468,7 +480,7 @@ func convertGameDir(class systemdb.Class, sysDir, dir, title string) (string, er
 // converts the result, cleaning up the extraction scratch directory. It
 // returns the resulting top-level name under sysDir, same as
 // convertGameDir.
-func extractAndConvert(class systemdb.Class, sysDir, archivePath, title string) (string, error) {
+func extractAndConvert(sys string, class systemdb.Class, sysDir, archivePath, title string) (string, error) {
 	tmp, err := os.MkdirTemp(sysDir, "_extract.*")
 	if err != nil {
 		return "", err
@@ -478,5 +490,5 @@ func extractAndConvert(class systemdb.Class, sysDir, archivePath, title string) 
 	if err := archive.ExtractAll(archivePath, tmp); err != nil {
 		return "", err
 	}
-	return convertGameDir(class, sysDir, tmp, title)
+	return convertGameDir(sys, class, sysDir, tmp, title)
 }

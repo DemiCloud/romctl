@@ -62,6 +62,11 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 			if exists(out) {
 				return
 			}
+			if msg := signatureMismatch(j.sys, path); msg != "" {
+				log.Errf("%s", msg)
+				failed.Add(1)
+				return
+			}
 			if !runner.Act("[%d/%d] convert %s/%s -> %s", j.idx+1, j.total, j.sys, j.base, filepath.Base(out)) {
 				return
 			}

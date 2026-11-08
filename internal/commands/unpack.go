@@ -88,7 +88,7 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			if !runner.Act("unpack %s/%s", sys, base) {
 				return
 			}
-			if err := unpackOne(sysDir, archivePath, out); err != nil {
+			if err := unpackOne(sys, sysDir, archivePath, out); err != nil {
 				log.Errf("%v", err)
 				failed.Add(1)
 				return
@@ -112,8 +112,13 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 
 // unpackOne extracts archivePath's sole entry to out, retiring the
 // archive on success. The caller has already confirmed out doesn't
-// exist.
-func unpackOne(sysDir, archivePath, out string) error {
+// exist. The extracted file's signature is checked against sys before
+// it's ever promoted into the library or the archive retired - archives
+// are opaque until extracted, so this is the earliest point a misfiled
+// cartridge ROM archived into the wrong system's directory can actually
+// be caught, rather than silently unpacked and left under a now-bare,
+// misleading name.
+func unpackOne(sys, sysDir, archivePath, out string) error {
 	tmp, err := os.MkdirTemp(sysDir, "_extract.*")
 	if err != nil {
 		return err
@@ -126,6 +131,9 @@ func unpackOne(sysDir, archivePath, out string) error {
 	inner, err := soleFile(tmp)
 	if err != nil {
 		return err
+	}
+	if msg := signatureMismatch(sys, inner); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	if err := os.Rename(inner, out); err != nil {
 		return err

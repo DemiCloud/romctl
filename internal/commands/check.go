@@ -21,60 +21,52 @@ import (
 )
 
 // Check audits every system (structure, naming, formats) and BIOS files,
-// then prints the Checklist, a Fixes section (how to resolve what was
-// found), and the Summary, and reports whether anything FAILed. dupes
-// additionally scans each system for exact (byte-for-byte) duplicate
-// files - off by default since, unlike every other check, it has to read
-// every file's full content. scheme (`[naming] scheme`) is the
-// naming-audit category's yardstick: a name internal/actions.ApplyScheme
-// wouldn't change for the configured scheme isn't a finding. verbose
-// prints every finding as it's found (and skips the live per-category
-// spinners, which would otherwise collide with that output); rootHint, if
-// non-empty (an explicitly-passed "-r PATH"), is spliced into every
-// suggested command. Each category runs across every system in parallel -
-// independent, I/O-bound work, most visibly worthwhile for --dupes. Under
-// a structured format (json/yaml/toml/csv), the Checklist/Fixes text is
-// skipped entirely and every finding plus the summary tally is encoded
-// instead - see audit.Report.Encode.
-func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme, verbose bool, format cliutil.Format, rootHint string) (bool, error) {
+// then prints the Checks table and a Fixes table (how to resolve what was
+// found), and reports whether anything FAILed. Exact-duplicate detection
+// and full CHD data verification live in their own dedicated commands
+// (`dupes`, `verify` - see commands.Dupes/commands.Verify), not here: both
+// mean reading every file's full content, which can take long enough on a
+// library with large CHD/ISO files that folding them into check's own
+// instant, all-categories-at-once output made a slow pass indistinguishable
+// from a hang - the same reasoning that already split `bios` out as its
+// own command. scheme (`[naming] scheme`) is the naming-audit category's
+// yardstick: a name internal/actions.ApplyScheme wouldn't change for the
+// configured scheme isn't a finding. verbose prints every finding as it's
+// found (and skips the live all-phases-at-once display, which would
+// otherwise collide with that output); rootHint, if non-empty (an
+// explicitly-passed "-r PATH"), is spliced into every suggested command.
+// Each category runs across every system in parallel - independent,
+// I/O-bound work. Under a structured format (json/yaml/toml/csv), the
+// tables are skipped entirely and every finding plus the summary tally is
+// encoded instead - see audit.Report.Encode.
+func Check(lib *library.Library, systems []string, scheme actions.Scheme, verbose bool, format cliutil.Format, rootHint string) (bool, error) {
 	report := audit.New(os.Stdout, verbose, format, rootHint)
-
-	cliutil.RunPhase(format, verbose, "naming (tags, articles)", func() {
-		cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
-	})
+	report.CollapseBios()
 	esdeNames, _ := lib.ESDESystems()
-	cliutil.RunPhase(format, verbose, "structure (leftovers, playlists)", func() {
-		cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
-		checkUnknownSystems(report, lib, systems)
-	})
-	cliutil.RunPhase(format, verbose, "containers (formats, conversions)", func() {
-		cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys, esdeNames) })
-	})
-	cliutil.RunPhase(format, verbose, "bios (presence, hashes)", func() {
-		checkBios(report, lib, systems)
-	})
-	if dupes {
-		report.EnableDuplicates()
-		cliutil.RunPhase(format, verbose, "duplicates (exact content matches)", func() {
-			// Systems stay sequential here, unlike every other phase above:
-			// checkDuplicates already parallelizes the expensive part (hashing
-			// full file content) across a worker pool sized to GOMAXPROCS.
-			// Also parallelizing across systems would nest two such pools,
-			// oversubscribing the CPU (up to GOMAXPROCS^2 concurrent hashes)
-			// instead of speeding anything up.
-			for _, sys := range systems {
-				checkDuplicates(report, sys, filepath.Join(lib.Roms, sys))
-			}
-		})
+
+	phases := []cliutil.Phase{
+		{Label: string(audit.CategoryNaming), Fn: func() {
+			cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
+		}},
+		{Label: string(audit.CategoryStructure), Fn: func() {
+			cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
+			checkUnknownSystems(report, lib, systems)
+		}},
+		{Label: string(audit.CategoryContainers), Fn: func() {
+			cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys, esdeNames) })
+		}},
+		{Label: string(audit.CategoryBios), Fn: func() {
+			checkBios(report, lib, systems)
+		}},
 	}
+	cliutil.RunPhases(format, verbose, phases)
 
 	if format.Structured() {
 		return !report.Failed(), report.Encode(os.Stdout, format)
 	}
 
-	report.Checklist(os.Stdout)
+	report.Table(os.Stdout)
 	report.Fixes(os.Stdout)
-	report.Summary(os.Stdout)
 	return !report.Failed(), nil
 }
 
@@ -120,6 +112,7 @@ func checkNaming(report *audit.Report, lib *library.Library, sys string, scheme 
 		if nonROMExts[ext] {
 			continue
 		}
+		report.Scan(audit.CategoryNaming, 1)
 		name := strings.TrimSuffix(base, filepath.Ext(base))
 		if clean := actions.ApplyScheme(name, scheme); clean != name {
 			report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+"."+ext), "rename")
@@ -139,6 +132,7 @@ func checkStructure(report *audit.Report, lib *library.Library, sys string) {
 		if base == "systeminfo.txt" || base == ".directory" {
 			continue
 		}
+		report.Scan(audit.CategoryStructure, 1)
 		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
 			checkStructureDir(report, sys, path)
@@ -207,6 +201,7 @@ func checkUnknownSystems(report *audit.Report, lib *library.Library, systems []s
 		return
 	}
 	for _, sys := range systems {
+		report.Scan(audit.CategoryStructure, 1)
 		if _, known := systemdb.SystemClass[sys]; known {
 			continue
 		}
@@ -259,6 +254,7 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string, esd
 		if base == "systeminfo.txt" || base == ".directory" {
 			continue
 		}
+		report.Scan(audit.CategoryContainers, 1)
 		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
 			checkContainerDir(report, sys, class, path)

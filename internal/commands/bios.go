@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,13 +48,18 @@ func biosCatalog(systems []string) []biosEntry {
 // biosLabel returns a short human phrase for entry, from systemdb.BiosLabel
 // when listed there, else a generic fallback so a future addition to
 // BiosRequired/BiosOptional that hasn't been labeled yet still prints
-// something sensible instead of nothing.
+// something sensible instead of nothing. The per-alternative key
+// ("<system>/<file>") is tried first regardless of required/optional -
+// every optional entry is already keyed that way, and so is xbox, the one
+// required system with more than one independent required file (three
+// single-alternative groups, not one group of three alternatives like
+// everything else); only a single-group required system (the common
+// case) actually needs the bare "<system>" fallback key.
 func biosLabel(e biosEntry) string {
-	key := e.system
-	if !e.required {
-		key = e.system + "/" + e.alternatives[0]
+	if label, ok := systemdb.BiosLabel[e.system+"/"+e.alternatives[0]]; ok {
+		return label
 	}
-	if label, ok := systemdb.BiosLabel[key]; ok {
+	if label, ok := systemdb.BiosLabel[e.system]; ok {
 		return label
 	}
 	if e.required {
@@ -64,13 +68,31 @@ func biosLabel(e biosEntry) string {
 	return fmt.Sprintf("%s: optional BIOS/firmware", e.system)
 }
 
+// splitLabel splits a BiosLabel entry at its trailing " (<note>)" into a
+// short display name and the technical caveat a beginner doesn't need up
+// front - e.g. "DS firmware (per-console MAC address; size-checked, not
+// hashed)" becomes ("DS firmware", "per-console MAC address;
+// size-checked, not hashed"). A label with no trailing parenthetical
+// (most of them) returns unchanged with an empty note.
+func splitLabel(label string) (name, note string) {
+	if i := strings.Index(label, " ("); i >= 0 && strings.HasSuffix(label, ")") {
+		return label[:i], label[i+2 : len(label)-1]
+	}
+	return label, ""
+}
+
 // biosStatus is one biosEntry's computed state against an actual bios/
-// directory.
+// directory. issue is message's short form - a couple of words at most,
+// e.g. "missing"/"hash mismatch" - for a table/CSV cell a beginner can
+// scan at a glance; message keeps the full detail (exact hash values, the
+// no-games-yet nuance) for json/yaml/toml, where a script or a curious
+// user can still get it.
 type biosStatus struct {
 	entry   biosEntry
 	present string // the alternative actually found under bios/, "" if none
 	ok      bool   // present, and correct wherever there's a reference to check
 	level   audit.Level
+	issue   string
 	message string
 }
 
@@ -106,29 +128,29 @@ func evaluateBios(lib *library.Library, entry biosEntry) biosStatus {
 	if st.present == "" {
 		switch {
 		case !entry.required:
-			st.level, st.message = audit.Info, "optional; not present"
+			st.level, st.issue, st.message = audit.Info, "optional", "optional; not present"
 		case hasGames:
-			st.level, st.message = audit.Fail, "required BIOS missing"
+			st.level, st.issue, st.message = audit.Fail, "missing", "required BIOS missing"
 		default:
-			st.level, st.message = audit.Warn, "required BIOS missing (no games present for "+entry.system+" yet)"
+			st.level, st.issue, st.message = audit.Warn, "missing", "required BIOS missing (no games present for "+entry.system+" yet)"
 		}
 		return st
 	}
 
 	path := filepath.Join(lib.Bios, st.present)
-	badMsg := ""
+	badIssue, badMsg := "", ""
 	if wantSum, ok := systemdb.BiosMD5[st.present]; ok {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			st.level, st.message = audit.Warn, "present but unreadable: "+err.Error()
+			st.level, st.issue, st.message = audit.Warn, "unreadable", "present but unreadable: "+err.Error()
 			return st
 		}
 		if sum := md5Hex(data); sum != wantSum {
-			badMsg = fmt.Sprintf("MD5 %s does not match reference %s", sum, wantSum)
+			badIssue, badMsg = "hash mismatch", fmt.Sprintf("MD5 %s does not match reference %s", sum, wantSum)
 		}
 	} else if wantSize, ok := systemdb.BiosSize[st.present]; ok {
 		if info, err := os.Stat(path); err == nil && info.Size() != wantSize {
-			badMsg = fmt.Sprintf("unexpected size %d (want %d)", info.Size(), wantSize)
+			badIssue, badMsg = "wrong size", fmt.Sprintf("unexpected size %d (want %d)", info.Size(), wantSize)
 		}
 	}
 	if badMsg == "" {
@@ -136,77 +158,13 @@ func evaluateBios(lib *library.Library, entry biosEntry) biosStatus {
 		st.message = "present"
 		return st
 	}
+	st.issue, st.message = badIssue, badMsg
 	if entry.required && hasGames {
-		st.level, st.message = audit.Fail, badMsg
+		st.level = audit.Fail
 	} else {
-		st.level, st.message = audit.Warn, badMsg
+		st.level = audit.Warn
 	}
 	return st
-}
-
-// biosKnownAlternatives returns every filename/glob pattern used by any
-// system's BiosRequired group or BiosOptional entry, across every system
-// romctl knows about - bios/ is one shared directory, not scoped per
-// system, so a file sitting there could belong to any system, whether or
-// not that system is in the current systems list.
-func biosKnownAlternatives() map[string]bool {
-	known := map[string]bool{}
-	for _, groups := range systemdb.BiosRequired {
-		for _, group := range groups {
-			for _, alt := range group {
-				known[alt] = true
-			}
-		}
-	}
-	for _, groups := range systemdb.BiosOptional {
-		for _, group := range groups {
-			for _, alt := range group {
-				known[alt] = true
-			}
-		}
-	}
-	return known
-}
-
-// unrecognizedBiosFiles walks lib.Bios and returns the forward-slash
-// relative path of every regular file that doesn't match any known
-// alternative (a glob pattern like "ps2-*.bin" is matched with
-// filepath.Match, not exact string equality) - the inverse of the usual
-// "what's missing" check: what's present that romctl doesn't recognize
-// at all. Always INFO wherever it's used (see checkBios/biosRows): an
-// unrecognized file is never romctl's business to call wrong, just worth
-// a heads-up (a typo'd filename, leftover from a system no longer used,
-// ordinary OS/editor clutter). Anything under rpcs3/ is skipped wholesale
-// - that's an installed, multi-file PS3 firmware tree (see
-// systemdb.BiosRequired's ps3 entry, which only names one file inside it
-// as a presence proxy), not a single file to catalog, so every one of
-// its thousands of files would otherwise be flagged. Dotfiles (editor/OS
-// metadata) are skipped too.
-func unrecognizedBiosFiles(lib *library.Library) []string {
-	known := biosKnownAlternatives()
-	var out []string
-	filepath.WalkDir(lib.Bios, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(lib.Bios, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(filepath.Base(rel), ".") || strings.HasPrefix(rel, "rpcs3/") {
-			return nil
-		}
-		for alt := range known {
-			if matched, _ := filepath.Match(alt, rel); matched {
-				return nil
-			}
-		}
-		out = append(out, rel)
-		return nil
-	})
-	sort.Strings(out)
-	return out
 }
 
 // checkBios audits BIOS files for Check's bios category: one finding per
@@ -222,15 +180,14 @@ func checkBios(report *audit.Report, lib *library.Library, systems []string) {
 	if info, err := os.Stat(lib.Bios); err != nil || !info.IsDir() {
 		report.SkipBios()
 	}
-	for _, entry := range biosCatalog(systems) {
+	catalog := biosCatalog(systems)
+	report.Scan(audit.CategoryBios, len(catalog))
+	for _, entry := range catalog {
 		st := evaluateBios(lib, entry)
 		if st.ok {
 			continue
 		}
 		report.Add(st.level, audit.CategoryBios, entry.system, "bios/"+strings.Join(entry.alternatives, "|"), st.message, "")
-	}
-	for _, rel := range unrecognizedBiosFiles(lib) {
-		report.Add(audit.Info, audit.CategoryBios, "bios", "bios/"+rel, "not a romctl-tracked BIOS/firmware file", "")
 	}
 }
 
@@ -238,108 +195,96 @@ func checkBios(report *audit.Report, lib *library.Library, systems []string) {
 // bios category by default, or the full inventory - every known entry,
 // including the ones that are simply present and correct - when verbose.
 func Bios(lib *library.Library, systems []string, verbose bool, format cliutil.Format) (bool, error) {
-	if verbose && !format.Structured() {
+	if verbose {
 		return biosInventory(lib, systems, format)
 	}
 
 	report := audit.New(os.Stdout, false, format, "")
 	checkBios(report, lib, systems)
 	if format.Structured() {
-		if verbose {
-			return !report.Failed(), biosInventoryEncode(lib, systems, format)
-		}
 		return !report.Failed(), report.Encode(os.Stdout, format)
 	}
 	if report.BiosSkipped() {
 		fmt.Println("no bios/ directory; skipping BIOS checks")
 	}
-	report.Summary(os.Stdout)
+	report.Table(os.Stdout)
+	report.Fixes(os.Stdout)
 	return !report.Failed(), nil
 }
 
-// biosInventoryRow is one biosStatus rendered for text or structured
-// output - Label is the one addition beyond biosStatus's own fields,
-// since it's derived (systemdb.BiosLabel/biosLabel), not stored.
+// biosInventoryRow is one biosStatus's shape for every output form - via
+// cliutil.RenderList (see its doc comment). Every field carries a real
+// json/yaml/toml tag and round-trips there - the same short text the
+// table shows is readable straight out of structured output too, not
+// hidden behind it - and `col` tags are the only thing that varies: they
+// mark which fields also render in the table/CSV (a plain "flag it out
+// of the rich text" rather than a parallel short/full field pair with
+// different visibility rules, less special-casing to keep straight).
+// Name/Issue carry both: the short text everyone sees - most people
+// running this have never heard of an MD5 or a per-console MAC address
+// and don't need to - Name being the bios' short name (e.g. "DS
+// firmware", not the full "DS firmware (per-console MAC address;
+// size-checked, not hashed)") and Issue a couple of words ("missing",
+// "hash mismatch"), not the exact values involved. Label/Message carry
+// only json/yaml/toml: the same data in full (the complete name+caveat,
+// the complete issue with exact hash/size values), for a script or a
+// closer look, never cluttering the table/CSV. Status carries the
+// severity colored for the format it was built for (see biosRows);
+// json/yaml/toml keep the field's own "level" name regardless of the
+// table's "Status" header, so a structured consumer's key doesn't change
+// along with display wording.
 type biosInventoryRow struct {
-	System       string   `json:"system" yaml:"system" toml:"system"`
-	Alternatives []string `json:"alternatives" yaml:"alternatives" toml:"alternatives"`
-	Required     bool     `json:"required" yaml:"required" toml:"required"`
-	Level        string   `json:"level" yaml:"level" toml:"level"`
-	Present      string   `json:"present,omitempty" yaml:"present,omitempty" toml:"present,omitempty"`
+	System       string   `json:"system" yaml:"system" toml:"system" col:"System"`
+	Alternatives []string `json:"alternatives" yaml:"alternatives" toml:"alternatives" col:"Alternatives"`
+	Required     bool     `json:"required" yaml:"required" toml:"required" col:"Required"`
+	Status       string   `json:"level" yaml:"level" toml:"level" col:"Status"`
+	Present      string   `json:"present,omitempty" yaml:"present,omitempty" toml:"present,omitempty" col:"Present"`
+	Issue        string   `json:"issue" yaml:"issue" toml:"issue" col:"Issue"`
+	Name         string   `json:"name" yaml:"name" toml:"name" col:"Name"`
 	Message      string   `json:"message" yaml:"message" toml:"message"`
 	Label        string   `json:"label" yaml:"label" toml:"label"`
 }
 
-func biosRows(lib *library.Library, systems []string) []biosInventoryRow {
-	catalog := biosCatalog(systems)
-	rows := make([]biosInventoryRow, 0, len(catalog))
-	for _, entry := range catalog {
-		st := evaluateBios(lib, entry)
-		level := "OK"
-		if !st.ok {
-			level = string(st.level)
-		}
-		rows = append(rows, biosInventoryRow{
-			System: entry.system, Alternatives: entry.alternatives, Required: entry.required,
-			Level: level, Present: st.present, Message: st.message, Label: biosLabel(entry),
-		})
-	}
-	for _, rel := range unrecognizedBiosFiles(lib) {
-		rows = append(rows, biosInventoryRow{
-			System: "bios", Alternatives: []string{rel}, Required: false,
-			Level: string(audit.Info), Present: rel, Message: "not a romctl-tracked BIOS/firmware file",
-		})
-	}
-	return rows
-}
-
-// biosInventory prints every known BIOS entry - present and correct ones
-// included - as a text table, for `romctl bios -v`. Each row's level is
-// colored by severity in Fancy format.
-func biosInventory(lib *library.Library, systems []string, format cliutil.Format) (bool, error) {
-	rows := biosRows(lib, systems)
+// biosRows builds the full BIOS inventory - present-and-correct entries
+// included - for `romctl bios -v`. failed reports whether any entry is
+// FAIL, for Bios' own exit code; Status is colored by severity under
+// format (blank outside Fancy - see cliutil.ColorsFor), computed here
+// rather than left to the renderer, since RenderTable/RenderList have no
+// per-row severity concept of their own to color by.
+func biosRows(lib *library.Library, systems []string, format cliutil.Format) (rows []biosInventoryRow, failed bool) {
 	colors := cliutil.ColorsFor(format)
 	levelColor := map[string]string{
 		string(audit.Fail): colors.Red, string(audit.Warn): colors.Yellow,
 		string(audit.Info): colors.Green, "OK": colors.Green,
 	}
-	failed := false
-	fmt.Println("BIOS inventory:")
-	for _, r := range rows {
-		if r.Level == string(audit.Fail) {
+	catalog := biosCatalog(systems)
+	rows = make([]biosInventoryRow, 0, len(catalog))
+	for _, entry := range catalog {
+		st := evaluateBios(lib, entry)
+		level := "OK"
+		issue := st.issue
+		if !st.ok {
+			level = string(st.level)
+		} else {
+			issue = "-"
+		}
+		if level == string(audit.Fail) {
 			failed = true
 		}
-		detail := r.Message
-		if r.Present != "" && len(r.Alternatives) > 1 {
-			// Only worth naming which one, out of several alternatives,
-			// was actually found - a single-alternative row already
-			// shows that same name in the Alternatives column.
-			detail = r.Present + ": " + detail
-		}
-		if r.Label != "" {
-			detail += " (" + r.Label + ")"
-		}
-		fmt.Printf("  %s%-4s%s  %-12s %-50s %s\n", levelColor[r.Level], r.Level, colors.Reset, r.System, strings.Join(r.Alternatives, "|"), detail)
+		label := biosLabel(entry)
+		name, _ := splitLabel(label)
+		rows = append(rows, biosInventoryRow{
+			System: entry.system, Alternatives: entry.alternatives, Required: entry.required,
+			Status: levelColor[level] + level + colors.Reset, Present: st.present,
+			Issue: issue, Name: name, Message: st.message, Label: label,
+		})
 	}
-	return !failed, nil
+	return rows, failed
 }
 
-// biosInventoryEncode encodes the same full inventory biosInventory prints,
-// for `romctl bios -v --format=json` (etc.) - `-v`'s structured payload is
-// the complete row set rather than Check/Bios' usual findings-only one,
-// since that's the entire point of asking for the inventory specifically.
-func biosInventoryEncode(lib *library.Library, systems []string, format cliutil.Format) error {
-	rows := biosRows(lib, systems)
-	if format == cliutil.FormatCSV {
-		header := []string{"system", "alternatives", "required", "level", "present", "message", "label"}
-		csvRows := make([][]string, 0, len(rows))
-		for _, r := range rows {
-			csvRows = append(csvRows, []string{
-				r.System, strings.Join(r.Alternatives, "|"), fmt.Sprintf("%t", r.Required),
-				r.Level, r.Present, r.Message, r.Label,
-			})
-		}
-		return cliutil.EncodeCSV(os.Stdout, header, csvRows)
-	}
-	return cliutil.Encode(os.Stdout, format, rows)
+// biosInventory renders the full BIOS inventory for `romctl bios -v`
+// (every format RenderList handles - fancy/plain/json/yaml/toml/csv).
+func biosInventory(lib *library.Library, systems []string, format cliutil.Format) (bool, error) {
+	rows, failed := biosRows(lib, systems, format)
+	return !failed, cliutil.RenderList(os.Stdout, format, rows)
 }

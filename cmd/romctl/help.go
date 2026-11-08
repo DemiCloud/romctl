@@ -19,7 +19,6 @@ const (
 	flagRoot          = "  -r, --root DIR          library root containing roms/ and bios/ (default: local RetroDECK install, else .)"
 	flagDryRun        = "  -n, --dry-run           preview changes instead of making them (default: apply)"
 	flagGames         = "  -g, --games             also print each game's title"
-	flagDupes         = "      --dupes             also scan for exact duplicate files"
 	flagFormat        = "      --format FMT        fancy, plain, json, yaml, toml, csv"
 	flagVerbose       = "  -v, --verbose           print every finding/action instead of a one-line summary"
 	flagYes           = "      --yes               skip confirmation prompts (clean; first-run library notice)"
@@ -62,7 +61,7 @@ var commandGroups = []struct {
 }
 
 var commandTable = map[string]cmdInfo{
-	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme, flagFormat}},
+	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagScheme, flagFormat}},
 	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"list":     {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
 	"fix":      {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest, flagFormat}},

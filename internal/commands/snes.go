@@ -64,6 +64,11 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 			if err != nil {
 				return
 			}
+			if msg := signatureMismatch(sys, src); msg != "" {
+				log.Errf("%s", msg)
+				failed.Add(1)
+				return
+			}
 			switch {
 			case snes.HasHeader(info.Size()):
 				if !runner.Act("strip header %s/%s -> %s", sys, base, outBase) {

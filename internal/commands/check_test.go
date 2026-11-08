@@ -61,20 +61,20 @@ func scratchLibrary(t *testing.T) *library.Library {
 func TestCheckNonVerboseOmitsFindingLines(t *testing.T) {
 	lib := scratchLibrary(t)
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx"}, false, actions.SchemeNoTag, false, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, false, cliutil.FormatPlain, "")
 	})
 	if strings.Contains(out, "naming ->") {
 		t.Errorf("non-verbose output should not include per-finding lines, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Checks:") || !strings.Contains(out, "Fixes:") {
-		t.Errorf("expected Checklist and Fixes sections, got:\n%s", out)
+	if !strings.Contains(out, "CHECK") || !strings.Contains(out, "FIX") {
+		t.Errorf("expected the Checks and Fixes tables, got:\n%s", out)
 	}
 }
 
 func TestCheckVerboseIncludesFindingLines(t *testing.T) {
 	lib := scratchLibrary(t)
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	if !strings.Contains(out, "naming ->") {
 		t.Errorf("verbose output should include per-finding naming lines, got:\n%s", out)
@@ -90,7 +90,7 @@ func TestCheckVerboseIncludesFindingLines(t *testing.T) {
 func TestCheckFixesNamesTheRootFlagWhenExplicit(t *testing.T) {
 	lib := scratchLibrary(t)
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx"}, false, actions.SchemeNoTag, false, cliutil.FormatPlain, "-r "+lib.Root)
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, false, cliutil.FormatPlain, "-r "+lib.Root)
 	})
 	if !strings.Contains(out, "-r "+lib.Root) {
 		t.Errorf("expected the Fixes section to include the explicit -r hint, got:\n%s", out)
@@ -115,13 +115,13 @@ func TestCheckFlagsMisfiledCartridgeROM(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx", "segacd"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx", "segacd"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	if !strings.Contains(out, "identifies as a Genesis/Mega Drive ROM") {
 		t.Errorf("expected the misfiled-ROM finding, got:\n%s", out)
 	}
-	if !strings.Contains(out, "relocate all") {
-		t.Errorf("expected the Fixes section to suggest relocate, got:\n%s", out)
+	if !strings.Contains(out, "relocate segacd") {
+		t.Errorf("expected the Fixes table to suggest relocate for segacd specifically, got:\n%s", out)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestCheckDoesNotFlagSegaCDBootSector(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		Check(lib, []string{"segacd"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"segacd"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	if strings.Contains(out, "identifies as a") {
 		t.Errorf("Sega CD boot sector should not be flagged as misfiled, got:\n%s", out)
@@ -165,7 +165,7 @@ func TestCheckFlagsUnknownSystemDirectory(t *testing.T) {
 	// Without systems.txt, systemdb alone can't tell a typo apart from a
 	// legitimate system it just doesn't know about yet - no finding.
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx", "totally-bogus-system"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx", "totally-bogus-system"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	if strings.Contains(out, "not a system directory") {
 		t.Errorf("should not flag an unknown directory without systems.txt, got:\n%s", out)
@@ -175,7 +175,7 @@ func TestCheckFlagsUnknownSystemDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captureStdout(t, func() {
-		Check(lib, []string{"psx", "totally-bogus-system"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx", "totally-bogus-system"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	if !strings.Contains(out, "not a system directory") {
 		t.Errorf("expected the unknown-directory finding once systems.txt is present, got:\n%s", out)
@@ -188,7 +188,7 @@ func TestCheckCategorySplitStillFindsEveryKind(t *testing.T) {
 	// report its finding.
 	lib := scratchLibrary(t)
 	out := captureStdout(t, func() {
-		Check(lib, []string{"psx"}, false, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
 	})
 	for _, want := range []string{
 		"naming ->",                     // naming

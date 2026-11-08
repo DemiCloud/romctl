@@ -1,13 +1,15 @@
 // Package audit implements the check/bios findings report: the
-// FAIL/WARN/INFO lines, the per-category checklist, the Fixes section, and
-// the colorized summary.
+// FAIL/WARN/INFO lines, the Checks table, and the Fixes table.
 package audit
 
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
+
+	"github.com/jedib0t/go-pretty/v6/table"
 
 	"github.com/demicloud/romctl/internal/cliutil"
 )
@@ -31,17 +33,10 @@ const (
 	CategoryContainers Category = "containers"
 	CategoryBios       Category = "bios"
 	CategoryDuplicates Category = "duplicates"
+	CategoryVerify     Category = "verify"
 )
 
-var categoryOrder = []Category{CategoryNaming, CategoryStructure, CategoryContainers, CategoryBios, CategoryDuplicates}
-
-var categoryLabels = map[Category]string{
-	CategoryNaming:     "naming (tags, articles)",
-	CategoryStructure:  "structure (leftovers, playlists)",
-	CategoryContainers: "containers (formats, conversions)",
-	CategoryBios:       "bios (presence, hashes)",
-	CategoryDuplicates: "duplicates (exact content matches)",
-}
+var categoryOrder = []Category{CategoryNaming, CategoryStructure, CategoryContainers, CategoryBios, CategoryDuplicates, CategoryVerify}
 
 // knownFixes are the subcommands a finding's fix can name - anything else
 // passed as fix is treated as "no command", not a typo, since every
@@ -52,7 +47,28 @@ var knownFixes = map[string]bool{
 	"saves": true, "relocate": true,
 }
 
-type tally struct{ fail, warn, info int }
+// fixLabels is knownFixes' short, Fixes-table-column phrase for each
+// subcommand.
+var fixLabels = map[string]string{
+	"rename":   "Fix naming",
+	"unpack":   "Unpack archive",
+	"chd":      "Convert to CHD",
+	"m3u":      "Group into playlist",
+	"n64":      "Normalize byte order",
+	"snes":     "Strip/rename SNES",
+	"xiso":     "Convert to XISO",
+	"rvz":      "Convert to RVZ",
+	"ps3":      "Build PS3 ISO",
+	"clean":    "Delete pending files",
+	"saves":    "Move save/state file",
+	"relocate": "Relocate misfiled ROM",
+}
+
+// tally is one Category's running counts: scanned is every item Scan was
+// called for (whether or not it produced a finding), fail/warn/info are
+// the findings actually recorded. Table's Pass column is scanned minus
+// the other three - how much was actually looked at and found fine.
+type tally struct{ fail, warn, info, scanned int }
 
 // finding is one buffered Add() call, kept so Fixes() can build its
 // suggestions after every category has run.
@@ -65,8 +81,8 @@ type finding struct {
 
 // Report accumulates audit findings. In verbose mode each finding prints
 // as it's added; otherwise findings are buffered silently and only
-// Checklist/Fixes/Summary print, after every category has finished.
-// Add is safe to call from multiple goroutines (see commands.Check).
+// Table/Fixes print, after every category has finished. Add/Scan are safe
+// to call from multiple goroutines (see commands.Check).
 type Report struct {
 	mu                 sync.Mutex
 	w                  io.Writer
@@ -77,12 +93,12 @@ type Report struct {
 	byCategory         map[Category]*tally
 	findings           []finding
 	biosSkipped        bool
-	dupesEnabled       bool
+	collapseBios       bool
 }
 
 // New returns a Report that prints to w. verbose prints every finding as
-// it's added (Fixes/Checklist/Summary still print at the end either way,
-// except under a structured format - see Encode). rootHint, if non-empty
+// it's added (Table/Fixes still print at the end either way, except under
+// a structured format - see Encode). rootHint, if non-empty
 // (an explicitly-passed "-r PATH"), is spliced into every suggested
 // command so a copy-pasted fix still targets the right library root.
 func New(w io.Writer, verbose bool, format cliutil.Format, rootHint string) *Report {
@@ -95,6 +111,28 @@ func New(w io.Writer, verbose bool, format cliutil.Format, rootHint string) *Rep
 // hint can be copy-pasted; anything else (including "") is treated as no
 // command, and Fixes() explains it instead.
 func (r *Report) Add(level Level, category Category, system, path, message, fix string) {
+	r.record(level, category, system, path, message, fix)
+	if !r.verbose || r.format.Structured() {
+		return
+	}
+	r.printFinding(level, system, path, message, fix)
+}
+
+// AddQuiet records one finding exactly as Add does (counts, Table/Fixes/
+// Encode all see it the same way), but never prints it itself, even in
+// verbose mode - for a caller that renders its own live progress/result
+// line instead (Verify/Dupes' own cliutil.ParallelLive display), so the
+// same failure doesn't get printed twice - or, worse, interleave with a
+// live multi-line display's own managed block on the same terminal and
+// throw off its cursor-up accounting (see ParallelLive's own doc
+// comment).
+func (r *Report) AddQuiet(level Level, category Category, system, path, message, fix string) {
+	r.record(level, category, system, path, message, fix)
+}
+
+// record is Add's bookkeeping half: counts and buffers the finding for
+// Table/Fixes/Encode, independent of whether/how it also gets printed.
+func (r *Report) record(level Level, category Category, system, path, message, fix string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -120,10 +158,12 @@ func (r *Report) Add(level Level, category Category, system, path, message, fix 
 		t.info++
 	}
 	r.findings = append(r.findings, finding{level, category, system, path, fix, message})
+}
 
-	if !r.verbose || r.format.Structured() {
-		return
-	}
+// printFinding renders one finding's verbose line to r.w - Add's other
+// half, split out only so it reads as two clear steps (record, then
+// print) rather than one long function.
+func (r *Report) printFinding(level Level, system, path, message, fix string) {
 	colors := cliutil.ColorsFor(r.format)
 	levelColor := map[Level]string{Fail: colors.Red, Warn: colors.Yellow, Info: colors.Green}[level]
 	coloredLevel := fmt.Sprintf("%s%-4s%s", levelColor, level, colors.Reset)
@@ -132,6 +172,21 @@ func (r *Report) Add(level Level, category Category, system, path, message, fix 
 		return
 	}
 	fmt.Fprintf(r.w, "%s  %-12s %s: %s\n", coloredLevel, system, path, message)
+}
+
+// Scan records n items of category actually examined, whether or not any
+// produced a finding - the denominator Table's Pass column is computed
+// against, so a clean row still conveys how much ground was actually
+// covered rather than just "nothing to report."
+func (r *Report) Scan(category Category, n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.byCategory[category]
+	if t == nil {
+		t = &tally{}
+		r.byCategory[category] = t
+	}
+	t.scanned += n
 }
 
 // commandHint builds "<prog> [-r root] <fix> <system>" for a per-line hint.
@@ -155,13 +210,19 @@ func (r *Report) BiosSkipped() bool {
 	return r.biosSkipped
 }
 
-// EnableDuplicates marks the duplicates category as run (--dupes was
-// passed), so the checklist shows its real tally instead of "skipped".
-// Unlike every other check, finding exact duplicates means reading every
-// file's full content, which is a meaningfully different cost on a
-// library with large CHD/ISO files - so it only runs when asked for.
-func (r *Report) EnableDuplicates() {
-	r.dupesEnabled = true
+// CollapseBios enables collapsing every BIOS finding in Fixes into a
+// handful of category-level rows (System "BIOS", pointing at `bios -v`)
+// instead of listing each one individually. Check calls this: `bios` is
+// a whole dedicated command for "what's wrong with my BIOS files", so
+// check's own Fixes table shouldn't try to enumerate them. Bios's own
+// Report never calls this - it IS that dedicated command, so it always
+// lists every BIOS finding individually, the same as every other
+// category does by default (and the same reason Dupes/Verify's own -v
+// mode bypasses Fixes entirely in favor of a dedicated live/detailed
+// view, rather than needing an equivalent flag for their own category -
+// see commands.Dupes/commands.Verify).
+func (r *Report) CollapseBios() {
+	r.collapseBios = true
 }
 
 // Failed reports whether any FAIL-level finding was recorded.
@@ -179,80 +240,94 @@ func symbols(format cliutil.Format) (fail, warn, ok string) {
 	return "FAIL", "WARN", "OK"
 }
 
-// Checklist prints one line per Category, independent of whether it found
-// anything, so a run that ends "Clean" still shows what was actually
-// checked rather than just the absence of findings.
-func (r *Report) Checklist(w io.Writer) {
+// Table renders one row per Category actually engaged this run - a
+// category neither Scan nor Add was ever called for (e.g. every category
+// but bios, when only Bios() ran instead of the full Check) is left out
+// entirely, rather than printed as a misleading "clean" - with a
+// pass/warn/fail status glyph and the Pass/Warn/Fail/Info tallies, as a
+// single rich table (unicode box-drawing in Fancy format, bare ASCII
+// otherwise - see cliutil.NewTable). Bios explicitly skipped (no bios/
+// directory) gets a row of dashes instead of real tallies, since nothing
+// there is actually knowable either way. Starts with a blank line so
+// it's visually separated from the live per-phase status lines printed
+// just before it.
+func (r *Report) Table(w io.Writer) {
 	colors := cliutil.ColorsFor(r.format)
 	failSym, warnSym, okSym := symbols(r.format)
+
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Checks:")
+	var rows []table.Row
 	for _, cat := range categoryOrder {
-		label := categoryLabels[cat]
 		if cat == CategoryBios && r.biosSkipped {
-			fmt.Fprintf(w, "  %-34s - skipped (no bios/ directory)\n", label)
+			rows = append(rows, table.Row{string(cat), "-", "-", "-", "-", "-"})
 			continue
 		}
-		if cat == CategoryDuplicates && !r.dupesEnabled {
-			fmt.Fprintf(w, "  %-34s - skipped (use --dupes)\n", label)
+		tl := r.byCategory[cat]
+		if tl == nil {
 			continue
 		}
-		t := r.byCategory[cat]
-		if t == nil {
-			t = &tally{}
+		pass := tl.scanned - tl.fail - tl.warn - tl.info
+		if pass < 0 {
+			pass = 0
 		}
+		status := fmt.Sprintf("%s%s%s", colors.Green, okSym, colors.Reset)
 		switch {
-		case t.fail > 0:
-			fmt.Fprintf(w, "  %-34s %s%s %d fail%s, %d warn\n", label, colors.Red, failSym, t.fail, colors.Reset, t.warn)
-		case t.warn > 0:
-			fmt.Fprintf(w, "  %-34s %s%s %d warn%s\n", label, colors.Yellow, warnSym, t.warn, colors.Reset)
-		default:
-			fmt.Fprintf(w, "  %-34s %s%s clean%s\n", label, colors.Green, okSym, colors.Reset)
+		case tl.fail > 0:
+			status = fmt.Sprintf("%s%s%s", colors.Red, failSym, colors.Reset)
+		case tl.warn > 0:
+			status = fmt.Sprintf("%s%s%s", colors.Yellow, warnSym, colors.Reset)
 		}
+		rows = append(rows, table.Row{string(cat), status, pass, tl.warn, tl.fail, tl.info})
 	}
+	cliutil.RenderTable(w, r.format, []string{"Check", "Status", "Pass", "Warn", "Fail", "Info"}, rows)
 }
 
-// explanations maps a message substring to a fix phrase, built with the
-// finding's own path - checked in order, first match wins. Every entry
-// here corresponds to a fix=="" finding in commands/check.go; a future
-// one that isn't listed still gets a line (Fixes falls back to the raw
+// explanations maps a message substring to a short Fixes-table label and
+// a fix phrase built with the finding's own path - checked in order,
+// first match wins. Every entry here corresponds to a fix=="" finding in
+// commands/check.go; a future one that isn't listed still gets a row
+// (explainLabel falls back to the category name, explain to the raw
 // message), just not a prescribed action.
 var explanations = []struct {
 	substr string
+	label  string
 	build  func(path string) string
 }{
-	{"required BIOS missing", func(p string) string { return fmt.Sprintf("acquire %s and place it in bios/", p) }},
-	{"does not match reference", func(p string) string {
+	{"required BIOS missing", "Missing BIOS file", func(p string) string { return fmt.Sprintf("acquire %s and place it in bios/", p) }},
+	{"does not match reference", "Bad BIOS hash", func(p string) string {
 		return fmt.Sprintf("re-acquire %s; its hash doesn't match the known-good version", p)
 	}},
-	{"unexpected size for DS firmware", func(p string) string {
+	{"unexpected size", "Bad BIOS size", func(p string) string {
 		return fmt.Sprintf("re-acquire bios/%s; wrong file size", p)
 	}},
-	{"not a valid CHD", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
-	{"not a valid XISO", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
-	{"truncated or not ISO9660", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
-	{"leftover extraction directory", func(p string) string {
+	{"not a valid CHD", "Corrupt CHD", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"failed data verify", "Corrupt CHD (data)", func(p string) string {
+		return fmt.Sprintf("%s failed chdman's data verify; re-dump or re-acquire it", p)
+	}},
+	{"not a valid XISO", "Corrupt XISO", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"truncated or not ISO9660", "Corrupt ISO", func(p string) string { return fmt.Sprintf("%s is corrupt; re-dump or re-acquire it", p) }},
+	{"leftover extraction directory", "Leftover extraction dir", func(p string) string {
 		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
 	}},
-	{"incomplete", func(p string) string {
+	{"incomplete", "Incomplete leftover file", func(p string) string {
 		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
 	}},
-	{"no EBOOT.BIN found", func(p string) string {
+	{"no EBOOT.BIN found", "No EBOOT.BIN", func(p string) string {
 		return fmt.Sprintf("re-acquire the %s PS3 dump; EBOOT.BIN is missing or the folder is incomplete", p)
 	}},
-	{"missing playlist", func(p string) string {
+	{"missing playlist", "Missing playlist", func(p string) string {
 		return fmt.Sprintf("recreate %s, listing each disc file one per line", p)
 	}},
-	{"playlist entry not found", func(p string) string {
+	{"playlist entry not found", "Bad playlist entry", func(p string) string {
 		return fmt.Sprintf("restore the disc file referenced in %s, or remove its line from the playlist", p)
 	}},
-	{"disc file(s) but", func(p string) string {
+	{"disc file(s) but", "Playlist count mismatch", func(p string) string {
 		return fmt.Sprintf("check %s against its actual disc files; counts don't match", p)
 	}},
-	{"identical to", func(p string) string {
+	{"identical to", "Duplicate file", func(p string) string {
 		return fmt.Sprintf("remove %s; it's an exact duplicate of another file already kept", p)
 	}},
-	{"not a system directory", func(p string) string {
+	{"not a system directory", "Unknown system dir", func(p string) string {
 		return fmt.Sprintf("check %s for a typo, or remove it if it's an old/unused system", p)
 	}},
 }
@@ -269,52 +344,192 @@ func explain(message, path string) string {
 	return message
 }
 
-// Fixes prints how to resolve what was found: one aggregate line per
-// command-backed fix type (running it fixes every instance, so a count is
-// enough), then one line per command-less finding, each naming its actual
-// file (a count alone wouldn't say what to go acquire).
-func (r *Report) Fixes(w io.Writer) {
-	if len(r.findings) == 0 {
-		return
+// explainLabel returns explanations' short Fixes-table label for a
+// fix=="" finding's message, falling back to its category name.
+func explainLabel(category Category, message string) string {
+	for _, e := range explanations {
+		if strings.Contains(message, e.substr) {
+			return e.label
+		}
 	}
-	var commandOrder []string
-	commandCounts := map[string]int{}
-	var explained []finding
-	for _, f := range r.findings {
-		if knownFixes[f.fx] {
-			if commandCounts[f.fx] == 0 {
-				commandOrder = append(commandOrder, f.fx)
-			}
-			commandCounts[f.fx]++
+	return string(category)
+}
+
+// fixRow is one row of Fixes' table: issueType is what's wrong, count is
+// how many findings it covers, system is where (a real system name,
+// "BIOS"/a category name once rows are collapsed together, or "all"),
+// fix is the command (or, for a command-less finding, the plain-English
+// instruction) to resolve it.
+type fixRow struct {
+	issueType   string
+	count       int
+	system, fix string
+}
+
+// detailCommand returns the command that shows every instance behind a
+// collapsed command-less row in full: the category's own dedicated audit
+// command (bios -v/dupes -v/verify -v), else check's own -v. In practice
+// only reached for a category a caller has marked with Collapse, which
+// today is only check calling it for CategoryBios - dupes/duplicates and
+// verify's own commands never collapse their own findings (see Collapse's
+// doc comment), so these cases exist for correctness if that ever
+// changes, not because they're hit today.
+func (r *Report) detailCommand(category Category) string {
+	parts := []string{cliutil.ProgName()}
+	if r.rootHint != "" {
+		parts = append(parts, r.rootHint)
+	}
+	switch category {
+	case CategoryBios:
+		parts = append(parts, "bios", "-v")
+	case CategoryDuplicates:
+		parts = append(parts, "dupes", "-v")
+	case CategoryVerify:
+		parts = append(parts, "verify", "-v")
+	default:
+		parts = append(parts, "check", "-v")
+	}
+	return strings.Join(parts, " ")
+}
+
+// fixRows groups every actionable (Fail/Warn - an Info finding needs no
+// action, so it's left out entirely) finding into Fixes' rows:
+//
+//   - One row per distinct command-backed fix type, naming every system
+//     it actually affects (or "all" once more than one does, since every
+//     fix command also accepts "all" - so a copy-pasted command still
+//     fixes everything at once rather than needing one run per system).
+//
+//   - Command-less findings are grouped by (category, label). A library
+//     can easily have dozens of bad/missing BIOS files, and check isn't
+//     the place to enumerate them one by one - `bios` is a whole
+//     dedicated command for exactly that question, so every BIOS finding
+//     always collapses to its label, with "BIOS" (not any one console)
+//     as System and detailCommand's "bios -v" as the row's Fix. Every
+//     other command-less category has no narrower dedicated command, so
+//     a label with only one finding keeps its own system and specific
+//     instruction (nothing lost by being specific when there's only
+//     one); a label with more collapses the same way, pointing at
+//     `check -v` instead.
+//
+// Findings are sorted first so row order (and, for a shared fix type,
+// which system(s) land in "all") is deterministic regardless of which
+// goroutine's Add() call happened to land first.
+func (r *Report) fixRows() []fixRow {
+	r.mu.Lock()
+	findings := append([]finding(nil), r.findings...)
+	r.mu.Unlock()
+	sort.Slice(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		if a.category != b.category {
+			return a.category < b.category
+		}
+		if a.system != b.system {
+			return a.system < b.system
+		}
+		return a.path < b.path
+	})
+
+	var rows []fixRow
+
+	var cmdOrder []string
+	cmdCounts := map[string]int{}
+	cmdSystems := map[string]map[string]bool{}
+	for _, f := range findings {
+		if f.level == Info || !knownFixes[f.fx] {
 			continue
 		}
-		explained = append(explained, f)
+		if cmdCounts[f.fx] == 0 {
+			cmdOrder = append(cmdOrder, f.fx)
+			cmdSystems[f.fx] = map[string]bool{}
+		}
+		cmdCounts[f.fx]++
+		cmdSystems[f.fx][f.system] = true
 	}
-	if len(commandOrder) == 0 && len(explained) == 0 {
-		return
+	for _, fx := range cmdOrder {
+		sys := "all"
+		if systems := cmdSystems[fx]; len(systems) == 1 {
+			for s := range systems {
+				sys = s
+			}
+		}
+		rows = append(rows, fixRow{issueType: fixLabels[fx], count: cmdCounts[fx], system: sys, fix: r.commandHint(fx, sys)})
 	}
 
+	type bucketKey struct {
+		category Category
+		label    string
+	}
+	var bucketOrder []bucketKey
+	buckets := map[bucketKey][]finding{}
+	for _, f := range findings {
+		if f.level == Info || knownFixes[f.fx] {
+			continue
+		}
+		k := bucketKey{f.category, explainLabel(f.category, f.message)}
+		if buckets[k] == nil {
+			bucketOrder = append(bucketOrder, k)
+		}
+		buckets[k] = append(buckets[k], f)
+	}
+	for _, k := range bucketOrder {
+		fs := buckets[k]
+		if k.category == CategoryBios && !r.collapseBios {
+			// bios.go's own Report: this IS the dedicated detail view
+			// (see CollapseBios), so every BIOS finding is listed
+			// individually, same as any other category's lone finding.
+			for _, f := range fs {
+				rows = append(rows, fixRow{issueType: k.label, count: 1, system: f.system, fix: explain(f.message, f.path)})
+			}
+			continue
+		}
+		if k.category != CategoryBios && len(fs) == 1 {
+			f := fs[0]
+			rows = append(rows, fixRow{issueType: k.label, count: 1, system: f.system, fix: explain(f.message, f.path)})
+			continue
+		}
+		sys := string(k.category)
+		if k.category == CategoryBios {
+			sys = "BIOS"
+		}
+		rows = append(rows, fixRow{issueType: k.label, count: len(fs), system: sys, fix: r.detailCommand(k.category)})
+	}
+	return rows
+}
+
+// Fixes renders how to resolve what was found, as a single rich table
+// (Issue Type/Count/System/Fix - Count its own column rather than baked
+// into the label text, standard table UX): omitted entirely once fixRows
+// is empty, same as a clean report printing nothing before. Starts with a
+// blank line so it's visually separated from the Checks table printed
+// just before it.
+func (r *Report) Fixes(w io.Writer) {
+	rows := r.fixRows()
+	if len(rows) == 0 {
+		return
+	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Fixes:")
-	for _, fix := range commandOrder {
-		fmt.Fprintf(w, "  %d finding(s) -> [%s]\n", commandCounts[fix], r.commandHint(fix, "all"))
+	tableRows := make([]table.Row, len(rows))
+	for i, row := range rows {
+		tableRows[i] = table.Row{row.issueType, row.count, row.system, row.fix}
 	}
-	for _, f := range explained {
-		fmt.Fprintf(w, "  %-12s %s: %s\n", f.system, f.path, explain(f.message, f.path))
-	}
+	cliutil.RenderTable(w, r.format, []string{"Issue Type", "Count", "System", "Fix"}, tableRows)
 }
 
 // structuredFinding is one finding's shape in Encode's json/yaml/toml/csv
 // output. Fix is the bare subcommand name (e.g. "rename"), empty when the
 // finding has no command-backed fix - the same knownFixes test Add/Fixes
-// already use to tell a real fix from an explanatory message.
+// already use to tell a real fix from an explanatory message. The `col`
+// tags are what CSV's columns/rows come from (see cliutil.RenderList) -
+// the same struct json/yaml/toml encode directly, so every format is
+// guaranteed to agree on what a finding looks like.
 type structuredFinding struct {
-	Level    string `json:"level" yaml:"level" toml:"level"`
-	Category string `json:"category" yaml:"category" toml:"category"`
-	System   string `json:"system" yaml:"system" toml:"system"`
-	Path     string `json:"path" yaml:"path" toml:"path"`
-	Message  string `json:"message" yaml:"message" toml:"message"`
-	Fix      string `json:"fix,omitempty" yaml:"fix,omitempty" toml:"fix,omitempty"`
+	Level    string `json:"level" yaml:"level" toml:"level" col:"level"`
+	Category string `json:"category" yaml:"category" toml:"category" col:"category"`
+	System   string `json:"system" yaml:"system" toml:"system" col:"system"`
+	Path     string `json:"path" yaml:"path" toml:"path" col:"path"`
+	Message  string `json:"message" yaml:"message" toml:"message" col:"message"`
+	Fix      string `json:"fix,omitempty" yaml:"fix,omitempty" toml:"fix,omitempty" col:"fix"`
 }
 
 // structuredSummary is Encode's summary tally shape.
@@ -332,56 +547,30 @@ type structuredReport struct {
 
 // Encode writes every finding, plus the summary tally, as json/yaml/toml
 // or csv - for scripting against check's results instead of parsing its
-// text output. Unlike the text report, this has no Checklist equivalent
-// (which category ran isn't a "finding"); a category that found nothing
-// simply contributes no findings. CSV carries the findings table alone,
-// with no separate summary row - a consumer can get the same tally by
-// counting rows per level.
+// text output. Unlike the text report, this has no Table equivalent
+// (which category ran, or how much it scanned, isn't a "finding"); a
+// category that found nothing simply contributes no findings. CSV carries
+// the findings table alone, with no separate summary row - a consumer can
+// get the same tally by counting rows per level.
 func (r *Report) Encode(w io.Writer, format cliutil.Format) error {
 	r.mu.Lock()
 	findings := append([]finding(nil), r.findings...)
 	fails, warns, info := r.fails, r.warns, r.info
 	r.mu.Unlock()
 
-	if format == cliutil.FormatCSV {
-		header := []string{"level", "category", "system", "path", "message", "fix"}
-		rows := make([][]string, 0, len(findings))
-		for _, f := range findings {
-			fix := ""
-			if knownFixes[f.fx] {
-				fix = f.fx
-			}
-			rows = append(rows, []string{string(f.level), string(f.category), f.system, f.path, f.message, fix})
-		}
-		return cliutil.EncodeCSV(w, header, rows)
-	}
-
-	out := structuredReport{Findings: make([]structuredFinding, 0, len(findings))}
+	sfindings := make([]structuredFinding, 0, len(findings))
 	for _, f := range findings {
 		sf := structuredFinding{Level: string(f.level), Category: string(f.category), System: f.system, Path: f.path, Message: f.message}
 		if knownFixes[f.fx] {
 			sf.Fix = f.fx
 		}
-		out.Findings = append(out.Findings, sf)
+		sfindings = append(sfindings, sf)
 	}
-	out.Summary = structuredSummary{Fail: fails, Warn: warns, Info: info}
-	return cliutil.Encode(w, format, out)
-}
 
-// Summary prints the one-line tally, colorized (and with unicode symbols)
-// in Fancy format, honoring NO_COLOR.
-func (r *Report) Summary(w io.Writer) {
-	colors := cliutil.ColorsFor(r.format)
-	failSym, warnSym, okSym := symbols(r.format)
-	fmt.Fprintln(w)
-	switch {
-	case r.fails > 0:
-		fmt.Fprintf(w, "%s%s %d fail%s, %d warn, %d info\n", colors.Red, failSym, r.fails, colors.Reset, r.warns, r.info)
-	case r.warns > 0:
-		fmt.Fprintf(w, "%s%s %d warn%s, %d info\n", colors.Yellow, warnSym, r.warns, colors.Reset, r.info)
-	case r.info > 0:
-		fmt.Fprintf(w, "%s%s Clean%s (%d info)\n", colors.Green, okSym, colors.Reset, r.info)
-	default:
-		fmt.Fprintf(w, "%s%s Clean%s\n", colors.Green, okSym, colors.Reset)
+	if format == cliutil.FormatCSV {
+		return cliutil.EncodeListCSV(w, sfindings)
 	}
+
+	out := structuredReport{Findings: sfindings, Summary: structuredSummary{Fail: fails, Warn: warns, Info: info}}
+	return cliutil.Encode(w, format, out)
 }

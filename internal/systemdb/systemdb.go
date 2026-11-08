@@ -116,18 +116,35 @@ var BiosOptional = map[string][]BiosGroup{
 }
 
 // BiosMD5 holds reference MD5s for BIOS files with a single canonical
-// dump - every entry here has been cross-checked against the
-// independently-maintained RetroDECK BIOS pack's own per-file manifest
-// (its generator hashes and records every file it ships, rather than
-// this table being hand-typed from one source), confirming every
-// pre-existing value here and adding dc/naomi.zip, dc/awbios.zip and
-// Complex.bin, which that cross-check showed also have a single
-// canonical dump. Deliberately excluded even though the pack ships a
-// copy: xbox_hdd.qcow2 (an Xbox's virtual hard disk holds game saves on
-// a real one, so a "canonical" hash would false-positive on every
-// genuine save) and NDS firmware.bin (holds a real console's Wi-Fi MAC
-// address and user settings, likewise never actually fixed) - see
-// commands.checkBios, which size-checks firmware.bin instead.
+// dump - cross-checked against the independently-maintained RetroDECK
+// BIOS pack's own per-file manifest (its generator hashes and records
+// every file it ships, rather than this table being hand-typed from one
+// source), though that alone isn't sufficient: a manifest only proves
+// what RetroDECK's own pack happens to ship, not that every legitimately
+// sourced copy elsewhere hashes the same way. Deliberately excluded even
+// though the pack ships a copy:
+//
+//   - xbox_hdd.qcow2 (an Xbox's virtual hard disk holds game saves on a
+//     real one, so a "canonical" hash would false-positive on every
+//     genuine save) and NDS firmware.bin (holds a real console's Wi-Fi
+//     MAC address and user settings, likewise never actually fixed) -
+//     see commands.checkBios, which size-checks firmware.bin instead.
+//   - dc/naomi.zip and dc/awbios.zip: these used to be here, but a zip's
+//     own byte layout (compression, entry order, timestamps) varies
+//     between tools/sources even when the ROM content inside is
+//     byte-identical and correct - confirmed the hard way: a real user's
+//     naomi.zip, hashing to a value this table rejected as "wrong",
+//     turned out to match Batocera's own independently documented NAOMI
+//     BIOS MD5 exactly. Hashing an archive's outer bytes was simply the
+//     wrong check; presence is all that's actually verifiable here.
+//   - Complex.bin (Xbox's "Complex" flash BIOS replacement): at least two
+//     different builds circulate under this exact filename with
+//     different hashes, cross-checked against the same real user's file
+//   - it matched GameTechWiki's documented hash for Xbox kernel
+//     version 1.00.4627.01 exactly, a different (and equally legitimate)
+//     value than this table's former reference, which in turn differed
+//     again from a third source's (Batocera's) hash for the same name.
+//     No single MD5 is actually canonical here; presence is.
 var BiosMD5 = map[string]string{
 	"scph5500.bin":      "8dd7d5296a650fac7319bce665a6a53c",
 	"scph5501.bin":      "490f666e1afb15b7362b406ed1cea246",
@@ -142,8 +159,6 @@ var BiosMD5 = map[string]string{
 	"syscard3.pce":      "38179df8f4ac870017db21ebcbf53114",
 	"gexpress.pce":      "6d2cb14fc3e1f65ceb135633d1694122",
 	"dc/dc_boot.bin":    "e10c53c2f8b90bab96ead2d368858623",
-	"dc/naomi.zip":      "526eda1e2a7920c92c88178789d71d84",
-	"dc/awbios.zip":     "85254fbe320ca82a768ec2c26bb08def",
 	"panafz10.bin":      "51f2f43ae2f3508a14d9f56597e2d3ce",
 	"lynxboot.img":      "fcd403db69f54290b51035d82f835e7b",
 	"5200.rom":          "281f20ea4320404ec820fb7ec0693b38",
@@ -155,11 +170,14 @@ var BiosMD5 = map[string]string{
 	"gba_bios.bin":      "a860e8c0b6d573d191e4ec7db1b1e4f6",
 	"bios7.bin":         "df692a80a5b1bc90728bc3dfc76cd948",
 	"bios9.bin":         "a392174eb3e572fed6447e956bde4b25",
-	"mcpx_1.0.bin":      "d49c52a4102f6df7bcf8d0617ac475ed",
-	"Complex.bin":       "21445c6f28fca7285b0f167ea770d1e5",
-	"GC/USA/IPL.bin":    "b17148254a5799684c7d783206504926",
-	"GC/EUR/IPL.bin":    "db92574caab77a7ec99d4605fd6f2450",
-	"GC/JAP/IPL.bin":    "fc924a7c879b661abc37cec4f018fdf3",
+	// mcpx_1.0.bin: confirmed, not cut - a fixed silicon boot ROM burned
+	// into the MCPX chip, identical on every stock Xbox of this revision.
+	// Both xemu's own documentation and Batocera's wiki independently
+	// confirm this exact hash.
+	"mcpx_1.0.bin":   "d49c52a4102f6df7bcf8d0617ac475ed",
+	"GC/USA/IPL.bin": "b17148254a5799684c7d783206504926",
+	"GC/EUR/IPL.bin": "db92574caab77a7ec99d4605fd6f2450",
+	"GC/JAP/IPL.bin": "fc924a7c879b661abc37cec4f018fdf3",
 }
 
 // BiosSize holds an expected file size, in bytes, for a BIOS/firmware

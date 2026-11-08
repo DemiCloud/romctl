@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/demicloud/romctl/internal/actions"
+	"github.com/demicloud/romctl/internal/cliutil"
+	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
@@ -85,11 +88,46 @@ func TestConvertGameDirNamesMisfiledCartridgeROM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := convertGameDir(systemdb.ClassCD, dir, dir, "ALTERED_")
+	_, err := convertGameDir("segacd", systemdb.ClassCD, dir, dir, "ALTERED_")
 	if err == nil {
 		t.Fatal("convertGameDir succeeded, want an error naming the misfiled ROM")
 	}
 	if !strings.Contains(err.Error(), "Genesis/Mega Drive ROM") {
 		t.Fatalf("convertGameDir error = %q, want it to name the cartridge ROM", err)
+	}
+}
+
+// TestCHDRefusesMisfiledCartridgeROM guards the real failure mode that
+// prompted signatureMismatch: a bare, loose file sitting directly in a
+// CD-class system's directory (no subfolder, so convertGameDir's own
+// cartridgeHint never runs) whose content identifies as a cartridge ROM
+// must be refused before chdman ever sees it, not handed to chdman for an
+// opaque failure (or worse, a "successful" CHD of garbage data).
+func TestCHDRefusesMisfiledCartridgeROM(t *testing.T) {
+	root := t.TempDir()
+	segaDir := filepath.Join(root, "roms", "segacd")
+	if err := os.MkdirAll(segaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(segaDir, "ALTERED_.iso")
+	data := make([]byte, 0x200)
+	copy(data[0x100:], "SEGA MEGA DRIVE ")
+	if err := os.WriteFile(src, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	ok, err := CHD(lib, &actions.Runner{Format: cliutil.FormatPlain}, []string{"segacd"}, actions.SchemeNoTag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("CHD() reported success, want it to report the misfiled ROM as a failure")
+	}
+	if !exists(src) {
+		t.Error("source file should have been left alone, not converted")
+	}
+	if exists(filepath.Join(segaDir, "ALTERED_.chd")) {
+		t.Error("a CHD should never have been produced from the misfiled ROM")
 	}
 }

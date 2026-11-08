@@ -8,6 +8,29 @@ import (
 	"github.com/demicloud/romctl/internal/cliutil"
 )
 
+// rowContains reports whether some line of a rendered table contains
+// every one of want, in order - used instead of a single Contains so a
+// test can assert two values (e.g. a label and its Count) landed in the
+// same row, without depending on exact column widths/padding.
+func rowContains(text string, want ...string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		ok := true
+		pos := 0
+		for _, w := range want {
+			i := strings.Index(line[pos:], w)
+			if i < 0 {
+				ok = false
+				break
+			}
+			pos += i + len(w)
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAddVerboseGating(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, false, cliutil.FormatPlain, "")
@@ -57,18 +80,52 @@ func TestFixesCollapsesCommandBackedFindings(t *testing.T) {
 	r.Fixes(&out)
 	got := out.String()
 
-	if !strings.Contains(got, "2 finding(s)") || !strings.Contains(got, "rename all") {
-		t.Errorf("expected one collapsed line for the 2 rename findings, got:\n%s", got)
+	if !rowContains(got, "Fix naming", "2") || !strings.Contains(got, "rename all") {
+		t.Errorf("expected one collapsed row for the 2 rename findings (spanning 2 systems), with Count 2 in its own column, got:\n%s", got)
 	}
-	if !strings.Contains(got, "1 finding(s)") || !strings.Contains(got, "chd all") {
-		t.Errorf("expected one collapsed line for the 1 chd finding, got:\n%s", got)
+	if !strings.Contains(got, "chd psx") {
+		t.Errorf("expected one row for the 1 chd finding naming its single system, got:\n%s", got)
 	}
 	if strings.Contains(got, "A.chd") || strings.Contains(got, "C.cue") {
 		t.Errorf("command-backed findings must not be listed individually, got:\n%s", got)
 	}
 }
 
-func TestFixesListsNoCommandFindingsIndividuallyWithTheRealFile(t *testing.T) {
+// TestFixesCollapseBiosGroupsUnderTheCategory guards CollapseBios (what
+// Check's own Report enables): once on, BIOS findings always collapse
+// under "BIOS" (never a specific console) pointing at `bios -v`, since
+// that dedicated command - not check's own Fixes table - is the right
+// place to enumerate BIOS files one by one, however many there are.
+func TestFixesCollapseBiosGroupsUnderTheCategory(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.CollapseBios()
+	r.Add(Fail, CategoryBios, "psx", "bios/scph5501.bin|scph5502.bin", "required BIOS missing", "")
+	r.Add(Fail, CategoryBios, "bios", "dc_boot.bin", "MD5 ab12 does not match reference cd34", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+
+	if strings.Contains(got, "scph5501") || strings.Contains(got, "dc_boot.bin") {
+		t.Errorf("BIOS findings should collapse to the category, not name individual files, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Missing BIOS file") || !strings.Contains(got, "Bad BIOS hash") {
+		t.Errorf("expected one row per distinct BIOS issue label, got:\n%s", got)
+	}
+	if !strings.Contains(got, "BIOS") {
+		t.Errorf("expected the System column to read BIOS, got:\n%s", got)
+	}
+	if !strings.Contains(got, "bios -v") {
+		t.Errorf("expected the Fix column to point at the dedicated bios -v command, got:\n%s", got)
+	}
+}
+
+// TestFixesListsBiosFindingsIndividuallyWithoutCollapseBios guards the
+// default (what Bios's own Report uses, by never calling Collapse): it IS
+// the dedicated BIOS detail view, so every finding is still listed with
+// its own specific file and instruction, the same as before.
+func TestFixesListsBiosFindingsIndividuallyWithoutCollapseBios(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Fail, CategoryBios, "psx", "bios/scph5501.bin|scph5502.bin", "required BIOS missing", "")
@@ -86,6 +143,50 @@ func TestFixesListsNoCommandFindingsIndividuallyWithTheRealFile(t *testing.T) {
 	}
 	if !strings.Contains(got, "dc_boot.bin") || !strings.Contains(got, "re-acquire dc_boot.bin") {
 		t.Errorf("expected the MD5 mismatch line to name dc_boot.bin specifically, got:\n%s", got)
+	}
+}
+
+// TestFixesKeepsSpecificsForALoneNonBiosFinding guards the non-BIOS case:
+// with only one finding under a label, and no dedicated command to
+// redirect to, the row should still name the real system and the
+// specific instruction rather than a generic pointer.
+func TestFixesKeepsSpecificsForALoneNonBiosFinding(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.Add(Fail, CategoryContainers, "ps3", "SomeGame", "no EBOOT.BIN found", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+	if !strings.Contains(got, "ps3") {
+		t.Errorf("expected the real system to appear, got:\n%s", got)
+	}
+	if !strings.Contains(got, "SomeGame") {
+		t.Errorf("expected the specific instruction naming SomeGame, got:\n%s", got)
+	}
+}
+
+// TestFixesCollapsesManyNonBiosFindingsUnderOneLabel guards the other
+// half of the same rule: once a non-BIOS label has more than one
+// finding, it collapses too (pointing at check -v for the specifics),
+// the same way BIOS always does.
+func TestFixesCollapsesManyNonBiosFindingsUnderOneLabel(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.Add(Fail, CategoryContainers, "ps3", "GameA", "no EBOOT.BIN found", "")
+	r.Add(Fail, CategoryContainers, "ps3", "GameB", "no EBOOT.BIN found", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+	if strings.Contains(got, "GameA") || strings.Contains(got, "GameB") {
+		t.Errorf("collapsed row should not name individual files, got:\n%s", got)
+	}
+	if !rowContains(got, "No EBOOT.BIN", "2") {
+		t.Errorf("expected the collapsed label with Count 2 in its own column, got:\n%s", got)
+	}
+	if !strings.Contains(got, "check -v") {
+		t.Errorf("expected the Fix column to point at check -v, got:\n%s", got)
 	}
 }
 
@@ -112,7 +213,7 @@ func TestFixesEmptyWhenNothingFound(t *testing.T) {
 	}
 }
 
-func TestChecklistAndSummaryStillWork(t *testing.T) {
+func TestFailedAfterFailLevelAdd(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Fail, CategoryContainers, "psx", "Game.chd", "not a valid CHD", "")

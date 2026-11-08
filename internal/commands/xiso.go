@@ -85,6 +85,11 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 				return
 			}
 
+			if msg := signatureMismatch(sys, src); msg != "" {
+				log.Errf("%s", msg)
+				failed.Add(1)
+				return
+			}
 			if !runner.Act("convert %s/%s -> %s", sys, base, filepath.Base(out)) {
 				return
 			}
