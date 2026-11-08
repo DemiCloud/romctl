@@ -8,7 +8,7 @@ import (
 )
 
 func newRenameCmd() *cobra.Command {
-	cmd := newMutatingCmd("rename [SYSTEM...|all]", "apply the configured naming scheme to loose files (see [naming])")
+	cmd := newHiddenStepCmd("rename [SYSTEM...|all]", "apply the configured naming scheme to loose files")
 	cmd.Flags().String("scheme", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
@@ -23,7 +23,7 @@ func newRenameCmd() *cobra.Command {
 }
 
 func newRelocateCmd() *cobra.Command {
-	cmd := newMutatingCmd("relocate [SYSTEM...|all]", "move a misfiled cartridge ROM into its correct system directory")
+	cmd := newHiddenStepCmd("relocate [SYSTEM...|all]", "move a misfiled cartridge ROM into its correct system directory")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return commands.Relocate(appCtx.lib, runner, systems)
@@ -33,7 +33,7 @@ func newRelocateCmd() *cobra.Command {
 }
 
 func newSavesCmd() *cobra.Command {
-	cmd := newMutatingCmd("saves [SYSTEM...|all]", "move stray save/state files out of roms/ into saves/, states/")
+	cmd := newHiddenStepCmd("saves [SYSTEM...|all]", "move stray save/state files out of roms/ into saves/, states/")
 	cmd.Flags().String("dest", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		dest, _ := cmd.Flags().GetString("dest")

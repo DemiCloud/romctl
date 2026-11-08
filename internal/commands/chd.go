@@ -14,6 +14,7 @@ import (
 	"github.com/demicloud/romctl/internal/archive"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/executil"
+	"github.com/demicloud/romctl/internal/formats/chd"
 	"github.com/demicloud/romctl/internal/formats/cso"
 	"github.com/demicloud/romctl/internal/formats/signature"
 	"github.com/demicloud/romctl/internal/gamelist"
@@ -163,6 +164,29 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
 				converted.Add(1)
+			case ".chd":
+				// Not a fresh conversion - an existing CHD that was made
+				// as CD-type back when a DVD-class system (e.g. PS2)
+				// didn't yet have that distinction. Re-encoding it is
+				// still squarely "make this system's CHDs correct," so
+				// it belongs in the same pass as every other case above
+				// rather than its own separate command.
+				if class != systemdb.ClassDVD {
+					return
+				}
+				kind, err := chd.Classify(path)
+				if err != nil || kind != chd.KindCDAsDVDMAGE {
+					return
+				}
+				if !runner.Act("[%d/%d] re-encode %s/%s as DVD CHD", i+1, total, sys, base) {
+					return
+				}
+				if err := reencodeAsDVD(path); err != nil {
+					log.Errf("failed, original kept: %s/%s: %v", sys, base, err)
+					failed.Add(1)
+					return
+				}
+				converted.Add(1)
 			}
 		})
 	})
@@ -298,6 +322,47 @@ func copyToDest(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// reencodeAsDVD re-encodes one existing CD-type CHD (chd.KindCDAsDVDMAGE -
+// a DVD-class system's title dumped back when CD/DVD CHD wasn't yet a
+// distinction chdman made) in place as a proper DVD-type CHD, via its own
+// fresh scratch directory - each call (possibly concurrent with others
+// re-encoding the same system) needs its own, since chdman's extractcd
+// always writes to fixed filenames. The scratch directory is created next
+// to path, inside its own system directory, rather than in the OS's
+// global temp dir: the final os.Rename below needs to land on the same
+// filesystem as path, and the system directory and the global temp dir
+// (often tmpfs, or another partition entirely) are frequently not the
+// same filesystem - e.g. a library living on an SD card. The "_extract."
+// prefix matches the one chd/unpack's own scratch directories already
+// use, so an interrupted run leaves a directory check already recognizes
+// as a leftover to clean up.
+func reencodeAsDVD(path string) error {
+	chdmanPath, err := tools.Resolve("chdman")
+	if err != nil {
+		return err
+	}
+	work, err := os.MkdirTemp(filepath.Dir(path), "_extract.*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+
+	iso := filepath.Join(work, "x.iso")
+	cue := filepath.Join(work, "x.cue")
+	out := filepath.Join(work, "out.chd")
+
+	if cmdOut, err := executil.Run(chdmanPath, "extractcd", "-i", path, "-o", cue, "-ob", iso); err != nil {
+		return fmt.Errorf("extractcd: %w: %s", err, cmdOut)
+	}
+	if err := makeCHD("dvd", iso, out); err != nil {
+		return err
+	}
+	if err := actions.Retire(path); err != nil {
+		return err
+	}
+	return os.Rename(out, path)
 }
 
 // csoToCHD decompresses a PSP CSO image and converts the result to a

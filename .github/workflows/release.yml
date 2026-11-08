@@ -70,3 +70,25 @@ jobs:
         with:
           name: romctl_${{ matrix.goos }}_${{ matrix.goarch }}
           path: build/romctl_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }}
+
+  # Publishes an actual GitHub Release for the pushed tag, with every
+  # platform's binary attached - build's own artifacts are just this
+  # workflow's intermediate storage (expire, aren't a public download).
+  # Skipped for a workflow_dispatch run with no tag (github.ref would be
+  # a branch, not something a release belongs to).
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: romctl_*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -370,7 +370,7 @@ func checkCHD(report *audit.Report, sys string, class systemdb.Class, base, file
 			fmt.Sprintf("old CHD %s; re-create with current chdman", kind), "")
 	case kind == chd.KindCDAsDVDMAGE:
 		if class == systemdb.ClassDVD {
-			report.Add(audit.Warn, audit.CategoryContainers, sys, base, "DVD image stored as CD-type CHD", "dvd")
+			report.Add(audit.Warn, audit.CategoryContainers, sys, base, "DVD image stored as CD-type CHD", "chd")
 		}
 	case kind == chd.KindDVD:
 		if class == systemdb.ClassCD {

@@ -24,18 +24,19 @@ type fixStep struct {
 // relocate misfiled cartridge ROMs first (so a Genesis ROM sitting in
 // roms/segacd/ gets out of the way before chd ever has to fail on it),
 // then unpack so n64/snes/chd see already-extracted files, convert disc
-// images to their emulator-native containers, group any loose multi-disc
-// CHDs that convert didn't already group itself, apply the naming scheme
-// last (once every file has settled into its final extension), then
-// relocate stray saves. scrape and sync are deliberately excluded - both
-// need credentials/network/an explicit device and are their own command,
-// not an implicit side effect of "fix everything local".
+// images to their emulator-native containers (chd also re-encodes any
+// existing CD-type CHD a DVD-class system needs as DVD-type - see CHD's
+// own doc comment, not a separate step), group any loose multi-disc CHDs
+// that convert didn't already group itself, apply the naming scheme last
+// (once every file has settled into its final extension), then relocate
+// stray saves. scrape and sync are deliberately excluded - both need
+// credentials/network/an explicit device and are their own command, not
+// an implicit side effect of "fix everything local".
 func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, savesDest string) []fixStep {
 	return []fixStep{
 		{"relocate", func() (bool, error) { return Relocate(lib, runner, systems) }},
 		{"unpack", func() (bool, error) { return Unpack(lib, runner, systems) }},
 		{"chd", func() (bool, error) { return CHD(lib, runner, systems, scheme) }},
-		{"dvd", func() (bool, error) { return DVD(lib, runner, systems) }},
 		{"rvz", func() (bool, error) { return RVZ(lib, runner, systems) }},
 		{"xiso", func() (bool, error) { return Xiso(lib, runner, systems) }},
 		{"n64", func() (bool, error) { return true, N64(lib, runner, systems) }},

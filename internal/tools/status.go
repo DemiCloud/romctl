@@ -3,6 +3,7 @@ package tools
 import (
 	"io/fs"
 	"os/exec"
+	"regexp"
 )
 
 // knownTools is every binary Resolve knows how to find, in the order
@@ -40,4 +41,41 @@ func AllStatuses() []Status {
 		out = append(out, st)
 	}
 	return out
+}
+
+// versionArgs is, per tool, whatever argument makes it print its own
+// version - chdman prints a version banner on any invocation (including
+// none at all), extract-xiso and skyscraper each have a dedicated flag.
+// dolphin-tool has no version output to parse at all, under any flag
+// tried; omitted here rather than guessed at.
+var versionArgs = map[string][]string{
+	"chdman":       nil,
+	"extract-xiso": {"-v"},
+	"skyscraper":   {"--version"},
+}
+
+var versionPattern = regexp.MustCompile(`\d+(?:\.\d+){1,3}`)
+
+// Version best-effort queries tool for its own version string. Unlike
+// AllStatuses, this resolves (and, for an embedded tool, extracts to
+// cache) the actual binary - the real side effect Resolve always has -
+// and runs it, so it only makes sense to call for a tool Status already
+// reports as Available. Returns "" if the tool has no known way to
+// report its version (dolphin-tool), isn't resolvable, or its output
+// didn't contain anything version-shaped.
+func Version(tool string) string {
+	args, ok := versionArgs[tool]
+	if !ok {
+		return ""
+	}
+	path, err := Resolve(tool)
+	if err != nil {
+		return ""
+	}
+	out, _ := exec.Command(path, args...).CombinedOutput()
+	m := versionPattern.FindString(string(out))
+	if m == "" {
+		return ""
+	}
+	return "v" + m
 }

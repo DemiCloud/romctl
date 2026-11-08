@@ -13,10 +13,10 @@ reference; keep it in step with behavior changes.
 
 | Path | Purpose |
 |---|---|
-| `cmd/romctl/` | `spf13/cobra` command tree (one file per command/group - `root.go` is shared infra: `appContext`, the first-run/pending-cleanup machinery, `--format` resolution; `help.go` is the hand-tuned man-page-brief help renderer, bypassing cobra's own verbose default; everything else wires a `*cobra.Command` to its `internal/commands` function). `completion`/dynamic system-name completion come from cobra for free. |
+| `cmd/romctl/` | `spf13/cobra` command tree (one file per command/group - `root.go` is shared infra: `appContext`, the first-run/pending-cleanup machinery, `--format` resolution; `help.go` is the hand-tuned man-page-brief help renderer, bypassing cobra's own verbose default; everything else wires a `*cobra.Command` to its `internal/commands` function). `completion`/dynamic system-name completion come from cobra for free. The individual steps `fix` chains (`chd`, `rename`, ...) are built via `newHiddenStepCmd`, not `newMutatingCmd`: real, independently-runnable commands, just left out of the default `--help` listing (`fix`'s own one-liner already covers "what it runs"; `romctl help <name>` still works for any of them directly). |
 | `internal/` | Everything else, one package per concern — see below. |
 | `Makefile` | `go build`/`test`/`vet` wrappers, plus fetching and building the four native tools (`chdman`, `dolphin-tool`, `extract-xiso`, `skyscraper`) into `internal/tools/data/<goos>_<goarch>/` for embedding. |
-| `.github/workflows/` | `ci.yml` (test/build matrix), `tools.yml` (native tool builds per platform), `release.yml` (assembles per-platform binaries from both). |
+| `.github/workflows/` | `ci.yml` (test/build matrix), `tools.yml` (native tool builds per platform), `release.yml` (assembles per-platform binaries from both, then publishes an actual GitHub Release with every one attached, via `softprops/action-gh-release`, on an actual tag push). |
 | `README.md` | User documentation. |
 | `vendor/`, `build/` | Build output; git-ignored. |
 
@@ -60,9 +60,9 @@ Key `internal/` packages:
 - **Case-only renames** must go through `actions.RenamePath` (handles
   case-insensitive filesystems: NTFS, exFAT, APFS by default).
 - **Check tool availability before acting.** `tools.Resolve` is called
-  before the first mutating action of a `chd`/`dvd`/`rvz`/`scrape` run,
-  never mid-run, and its error message says exactly what's missing and how
-  to get it.
+  before the first mutating action of a `chd`/`rvz`/`scrape` run, never
+  mid-run, and its error message says exactly what's missing and how to
+  get it. `romctl tools` reports the same resolution read-only, up front.
 - **External tool invocations go through `executil`.** `chdman`,
   `dolphin-tool` and `extract-xiso` get stdin from the null device via
   `executil.Run` (buffered output, shown only on failure); `rsync`/`ssh`

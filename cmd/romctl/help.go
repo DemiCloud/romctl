@@ -20,7 +20,7 @@ const (
 	flagDryRun        = "  -n, --dry-run           preview changes instead of making them (default: apply)"
 	flagGames         = "  -g, --games             also print each game's title"
 	flagDupes         = "      --dupes             also scan for exact duplicate files"
-	flagFormat        = "      --format FMT        fancy, plain, json, yaml, toml, csv (default: fancy on a terminal, else plain)"
+	flagFormat        = "      --format FMT        fancy, plain, json, yaml, toml, csv"
 	flagVerbose       = "  -v, --verbose           print every finding/action instead of a one-line summary"
 	flagYes           = "      --yes               skip confirmation prompts (clean; first-run library notice)"
 	flagPull          = "      --pull              pull from the device instead of pushing"
@@ -45,48 +45,43 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "dvd", "n64",
+	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems", "tools",
 }
 
-// commandGroups orders commandOrder's same 20 names into sections for the
-// root overview: the 3 commands most sessions actually use, the 12
-// individual steps fix chains (kept as real top-level commands - for
-// testing one step in isolation, or re-running just the one that failed -
-// but visually set apart so the top-level help reads as a handful of
-// verbs instead of twenty), then everything else.
+// commandGroups orders commandOrder's same names into sections for the
+// root overview: the 3 commands most sessions actually use, then
+// everything else. The individual steps `fix` chains (chd, rename, ...)
+// are deliberately not listed here at all - see newHiddenStepCmd.
 var commandGroups = []struct {
 	label string
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Individual fix steps (what `fix` runs, in order):",
-		[]string{"relocate", "unpack", "chd", "dvd", "rvz", "xiso", "n64", "snes", "ps3", "m3u", "rename", "saves"}},
 	{"Other:", []string{"bios", "list", "scrape", "clean", "systems", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
 	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme, flagFormat}},
-	"bios":     {"audit BIOS files only (-v for the full inventory)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"list":     {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
-	"fix":      {"run every local fix step: relocate, unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest, flagFormat}},
-	"rename":   {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
+	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"list":     {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
+	"fix":      {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest, flagFormat}},
+	"rename":   {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
 	"unpack":   {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"chd":      {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
 	"m3u":      {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"dvd":      {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"n64":      {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"snes":     {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"xiso":     {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"xiso":     {"convert Xbox disc images to XISO", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"rvz":      {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"ps3":      {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
 	"saves":    {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest, flagFormat}},
 	"relocate": {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"scrape":   {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
+	"scrape":   {"fetch game metadata/media via Skyscraper", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
 	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
-	"sync":     {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
-	"systems":  {"list every known system and its class (not just populated ones)", "", []string{flagFormat}},
-	"tools":    {"report embedded/PATH/missing status for chdman, dolphin-tool, extract-xiso, skyscraper", "", []string{flagFormat}},
+	"sync":     {"mirror roms/bios/media to a device", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
+	"systems":  {"list every known system and its class", "", []string{flagFormat}},
+	"tools":    {"report native tool availability", "", []string{flagFormat}},
 }
 
 // defaultHelpFunc is cobra's own stock renderer, captured before

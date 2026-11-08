@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"os"
-	"runtime"
 
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/tools"
@@ -13,7 +12,7 @@ import (
 type toolRecord struct {
 	Tool      string `json:"tool" yaml:"tool" toml:"tool"`
 	Status    string `json:"status" yaml:"status" toml:"status"` // "embedded", "PATH", "missing"
-	Location  string `json:"location,omitempty" yaml:"location,omitempty" toml:"location,omitempty"`
+	Version   string `json:"version,omitempty" yaml:"version,omitempty" toml:"version,omitempty"`
 	Available bool   `json:"available" yaml:"available" toml:"available"`
 }
 
@@ -26,18 +25,17 @@ type toolRecord struct {
 // platform (see AGENTS.md's native tool build status table) - this is
 // how to find out which ones this particular binary actually got.
 func Tools(format cliutil.Format) error {
-	statuses := tools.AllStatuses()
-	records := make([]toolRecord, 0, len(statuses))
-	for _, st := range statuses {
+	records := make([]toolRecord, 0, 4)
+	for _, st := range tools.AllStatuses() {
 		records = append(records, toolRecordFor(st))
 	}
 
 	if format.Structured() {
 		if format == cliutil.FormatCSV {
-			header := []string{"tool", "status", "location", "available"}
+			header := []string{"tool", "status", "version", "available"}
 			rows := make([][]string, 0, len(records))
 			for _, r := range records {
-				rows = append(rows, []string{r.Tool, r.Status, r.Location, fmt.Sprintf("%t", r.Available)})
+				rows = append(rows, []string{r.Tool, r.Status, r.Version, fmt.Sprintf("%t", r.Available)})
 			}
 			return cliutil.EncodeCSV(os.Stdout, header, rows)
 		}
@@ -45,13 +43,17 @@ func Tools(format cliutil.Format) error {
 	}
 
 	colors := cliutil.ColorsFor(format)
-	fmt.Printf("Native tools for %s/%s:\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("%-14s %-9s %s\n", "TOOL", "STATUS", "VERSION")
 	for _, r := range records {
 		color := colors.Green
 		if !r.Available {
 			color = colors.Red
 		}
-		fmt.Printf("  %-14s %s%-9s%s %s\n", r.Tool, color, r.Status, colors.Reset, r.Location)
+		version := r.Version
+		if version == "" {
+			version = "-"
+		}
+		fmt.Printf("%-14s %s%-9s%s %s\n", r.Tool, color, r.Status, colors.Reset, version)
 	}
 	return nil
 }
@@ -59,13 +61,10 @@ func Tools(format cliutil.Format) error {
 func toolRecordFor(st tools.Status) toolRecord {
 	switch {
 	case st.Embedded:
-		return toolRecord{Tool: st.Tool, Status: "embedded", Location: "extracts to cache on first use", Available: true}
+		return toolRecord{Tool: st.Tool, Status: "embedded", Version: tools.Version(st.Tool), Available: true}
 	case st.OnPath != "":
-		return toolRecord{Tool: st.Tool, Status: "PATH", Location: st.OnPath, Available: true}
+		return toolRecord{Tool: st.Tool, Status: "PATH", Version: tools.Version(st.Tool), Available: true}
 	default:
-		return toolRecord{
-			Tool: st.Tool, Status: "missing",
-			Location: fmt.Sprintf("not embedded for %s/%s, not on PATH", runtime.GOOS, runtime.GOARCH),
-		}
+		return toolRecord{Tool: st.Tool, Status: "missing"}
 	}
 }

@@ -36,7 +36,7 @@ worth reimplementing against ScreenScraper's own quota/approval rules — see
 
 | Tool | Used by | Upstream |
 |---|---|---|
-| `chdman` | `chd`, `dvd` | [MAME](https://github.com/mamedev/mame) |
+| `chdman` | `chd` | [MAME](https://github.com/mamedev/mame) |
 | `dolphin-tool` | `rvz` | [Dolphin](https://github.com/dolphin-emu/dolphin) |
 | `extract-xiso` | `xiso` (full/redump disc images only; renaming an already-valid XISO is pure Go) | [extract-xiso](https://github.com/XboxDev/extract-xiso) |
 | `skyscraper` | `scrape` | [Skyscraper](https://github.com/muldjord/skyscraper) |
@@ -143,7 +143,7 @@ By default every command prints a one-line summary when it finishes (e.g.
 pass `-v`/`--verbose` to also print each individual action as it happens.
 `--dry-run` always previews in full regardless of `-v` - that's the point
 of a dry run. In between, the long-running conversion commands (`chd`,
-`dvd`, `rvz`, `xiso`, `n64`, `snes`, `unpack`) animate a live `done/total`
+`rvz`, `xiso`, `n64`, `snes`, `unpack`) animate a live `done/total`
 counter on stderr so a run across hundreds of files doesn't look stalled;
 like `check`'s own spinner, it's skipped under `-v`/`--dry-run` (which
 already print per-file) and when stderr isn't a terminal. After a mutating
@@ -177,7 +177,7 @@ with a note, and `sync` doesn't take `--format` at all.
 Conversion commands convert every matching file across every system given
 in parallel, scaled to available CPU cores - pass one large system to
 convert, not one call per system, to get the full benefit. On Linux,
-`chd`/`dvd` also stage the candidate CHD on `/dev/shm` (tmpfs) when there's
+`chd` also stages the candidate CHD on `/dev/shm` (tmpfs) when there's
 room, skipping a redundant read-back from a slow ROM library (e.g. an SD
 card) during chdman's own verify step; this is size-aware and silently
 falls back to disk when it isn't safe to use.
@@ -187,12 +187,11 @@ falls back to disk when it isn't safe to use.
 | `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. See [Output format](#output-format) for `--format`. |
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
-| `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
+| `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge systems. |
-| `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. |
+| `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
 | `m3u` | Group loose `Title (Disc N).chd` files into `Title.m3u/`. |
-| `dvd` | Re-encode DVD images stored as CD-type CHDs (e.g. PS2) as DVD CHDs. |
 | `n64` | Normalize `.v64`/`.n64` byte orders to big-endian `.z64`. |
 | `snes` | Strip 512-byte copier headers; rename `.smc` to `.sfc`. |
 | `xiso` | Convert Xbox disc images to XISO: rename an already-valid one, or rebuild a full/redump dump. |

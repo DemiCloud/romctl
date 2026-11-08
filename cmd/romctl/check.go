@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/demicloud/romctl/internal/commands"
+	"github.com/demicloud/romctl/internal/version"
 )
 
 func newCheckCmd() *cobra.Command {
@@ -95,10 +98,21 @@ func newSystemsCmd() *cobra.Command {
 func newToolsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tools",
-		Short: "report embedded/PATH/missing status for chdman, dolphin-tool, extract-xiso, skyscraper",
+		Short: "report native tool availability",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return commands.Tools(appCtx.format)
 		},
+	}
+}
+
+// newVersionCmd is a subcommand alias for the --version flag.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "version",
+		Short:  "show version",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		Run:    func(cmd *cobra.Command, args []string) { fmt.Println(version.Version) },
 	}
 }

@@ -7,10 +7,12 @@ import (
 	"github.com/demicloud/romctl/internal/commands"
 )
 
-// addMutatingFlags registers the flags every job-based conversion/
-// normalization command shares (-n/-v/--format are already persistent on
-// root; this is just the systems-taking Args/ValidArgsFunction wiring
-// every one of them also shares).
+// newMutatingCmd builds the shared shape every mutating command uses
+// (-n/-v/--format are already persistent on root; this is just the
+// systems-taking Args/ValidArgsFunction wiring most of them also share).
+// fix/clean/scrape also use this but aren't hidden by newHiddenStepCmd
+// below, which every individual fix step (chd, rename, ...) goes through
+// instead.
 func newMutatingCmd(use, short string) *cobra.Command {
 	return &cobra.Command{
 		Use:               use,
@@ -20,8 +22,21 @@ func newMutatingCmd(use, short string) *cobra.Command {
 	}
 }
 
+// newHiddenStepCmd is newMutatingCmd for the steps `fix` already chains
+// (its own description names each one): kept as real, independently-
+// runnable commands - for testing one step in isolation, or re-running
+// just the one that failed - but left out of the default command listing
+// to keep it to the handful of verbs most sessions actually reach for.
+// `romctl help <name>` or `romctl <name> --help` still works for any of
+// them directly.
+func newHiddenStepCmd(use, short string) *cobra.Command {
+	cmd := newMutatingCmd(use, short)
+	cmd.Hidden = true
+	return cmd
+}
+
 func newCHDCmd() *cobra.Command {
-	cmd := newMutatingCmd("chd [SYSTEM...|all]", "convert disc images to CHD")
+	cmd := newHiddenStepCmd("chd [SYSTEM...|all]", "convert disc images to CHD")
 	cmd.Flags().String("scheme", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
@@ -35,18 +50,8 @@ func newCHDCmd() *cobra.Command {
 	return cmd
 }
 
-func newDVDCmd() *cobra.Command {
-	cmd := newMutatingCmd("dvd [SYSTEM...|all]", "re-encode DVD images stored as CD-type CHDs")
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
-			return commands.DVD(appCtx.lib, runner, systems)
-		})
-	}
-	return cmd
-}
-
 func newRVZCmd() *cobra.Command {
-	cmd := newMutatingCmd("rvz [SYSTEM...|all]", "convert GameCube/Wii images to RVZ")
+	cmd := newHiddenStepCmd("rvz [SYSTEM...|all]", "convert GameCube/Wii images to RVZ")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return commands.RVZ(appCtx.lib, runner, systems)
@@ -56,7 +61,7 @@ func newRVZCmd() *cobra.Command {
 }
 
 func newXisoCmd() *cobra.Command {
-	cmd := newMutatingCmd("xiso [SYSTEM...|all]", "rename Xbox XISO images from .iso to .xiso")
+	cmd := newHiddenStepCmd("xiso [SYSTEM...|all]", "convert Xbox disc images to XISO")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return commands.Xiso(appCtx.lib, runner, systems)
@@ -66,7 +71,7 @@ func newXisoCmd() *cobra.Command {
 }
 
 func newN64Cmd() *cobra.Command {
-	cmd := newMutatingCmd("n64 [SYSTEM...|all]", "normalize N64 ROMs to big-endian .z64")
+	cmd := newHiddenStepCmd("n64 [SYSTEM...|all]", "normalize N64 ROMs to big-endian .z64")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return true, commands.N64(appCtx.lib, runner, systems)
@@ -76,7 +81,7 @@ func newN64Cmd() *cobra.Command {
 }
 
 func newSNESCmd() *cobra.Command {
-	cmd := newMutatingCmd("snes [SYSTEM...|all]", "strip copier headers; rename .smc to .sfc")
+	cmd := newHiddenStepCmd("snes [SYSTEM...|all]", "strip copier headers; rename .smc to .sfc")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return true, commands.SNES(appCtx.lib, runner, systems)
@@ -86,7 +91,7 @@ func newSNESCmd() *cobra.Command {
 }
 
 func newUnpackCmd() *cobra.Command {
-	cmd := newMutatingCmd("unpack [SYSTEM...|all]", "extract single-file archives in cartridge systems")
+	cmd := newHiddenStepCmd("unpack [SYSTEM...|all]", "extract single-file archives in cartridge systems")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return commands.Unpack(appCtx.lib, runner, systems)
@@ -96,7 +101,7 @@ func newUnpackCmd() *cobra.Command {
 }
 
 func newM3UCmd() *cobra.Command {
-	cmd := newMutatingCmd("m3u [SYSTEM...|all]", "group loose multi-disc CHDs into a playlist directory")
+	cmd := newHiddenStepCmd("m3u [SYSTEM...|all]", "group loose multi-disc CHDs into a playlist directory")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
 			return true, commands.M3U(appCtx.lib, runner, systems)
@@ -106,7 +111,7 @@ func newM3UCmd() *cobra.Command {
 }
 
 func newPS3Cmd() *cobra.Command {
-	cmd := newMutatingCmd("ps3 [SYSTEM...|all]", "unpack PS3 archives, then build ISOs from disc folders")
+	cmd := newHiddenStepCmd("ps3 [SYSTEM...|all]", "unpack PS3 archives, then build ISOs from disc folders")
 	cmd.Flags().String("scheme", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)

@@ -47,7 +47,7 @@ var categoryLabels = map[Category]string{
 // passed as fix is treated as "no command", not a typo, since every
 // command-backed finding in commands/check.go uses one of these.
 var knownFixes = map[string]bool{
-	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
+	"rename": true, "unpack": true, "chd": true, "m3u": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
 	"saves": true, "relocate": true,
 }
