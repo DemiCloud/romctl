@@ -91,3 +91,14 @@ func newSystemsCmd() *cobra.Command {
 		},
 	}
 }
+
+func newToolsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tools",
+		Short: "report embedded/PATH/missing status for chdman, dolphin-tool, extract-xiso, skyscraper",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return commands.Tools(appCtx.format)
+		},
+	}
+}

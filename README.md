@@ -44,7 +44,10 @@ worth reimplementing against ScreenScraper's own quota/approval rules — see
 A release binary has these **embedded** for its platform and extracts them
 to a local cache on first use — nothing to build yourself. If a release
 doesn't carry one for your platform (see `make tools` below), romctl falls
-back to a copy on `PATH`.
+back to a copy on `PATH`. `romctl tools` reports, for the actual binary
+you're running, which of the four are embedded, found on `PATH`, or
+neither — so a missing tool shows up before a long `chd`/`rvz` run, not
+partway through it.
 
 Release binaries aren't code-signed. On macOS, a binary downloaded from a
 browser is quarantined and Gatekeeper will refuse to run it ("cannot be
@@ -201,6 +204,7 @@ falls back to disk when it isn't safe to use.
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `systems` | List every known system and its class, whether or not it's populated. |
+| `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither - see [Requirements](#requirements). |
 
 Typical session:
 

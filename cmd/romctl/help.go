@@ -46,7 +46,7 @@ type cmdInfo struct {
 
 var commandOrder = []string{
 	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "dvd", "n64",
-	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems",
+	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems", "tools",
 }
 
 // commandGroups orders commandOrder's same 20 names into sections for the
@@ -62,7 +62,7 @@ var commandGroups = []struct {
 	{"", []string{"check", "fix", "sync"}},
 	{"Individual fix steps (what `fix` runs, in order):",
 		[]string{"relocate", "unpack", "chd", "dvd", "rvz", "xiso", "n64", "snes", "ps3", "m3u", "rename", "saves"}},
-	{"Other:", []string{"bios", "list", "scrape", "clean", "systems"}},
+	{"Other:", []string{"bios", "list", "scrape", "clean", "systems", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
@@ -86,6 +86,7 @@ var commandTable = map[string]cmdInfo{
 	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
 	"sync":     {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
 	"systems":  {"list every known system and its class (not just populated ones)", "", []string{flagFormat}},
+	"tools":    {"report embedded/PATH/missing status for chdman, dolphin-tool, extract-xiso, skyscraper", "", []string{flagFormat}},
 }
 
 // defaultHelpFunc is cobra's own stock renderer, captured before

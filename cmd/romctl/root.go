@@ -86,7 +86,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("yes", false, "")
 	root.PersistentFlags().String("format", "", "")
 
-	root.AddCommand(newCheckCmd(), newBiosCmd(), newListCmd(), newSystemsCmd())
+	root.AddCommand(newCheckCmd(), newBiosCmd(), newListCmd(), newSystemsCmd(), newToolsCmd())
 	root.AddCommand(newFixCmd())
 	root.AddCommand(newRenameCmd(), newUnpackCmd(), newCHDCmd(), newM3UCmd(), newDVDCmd(),
 		newN64Cmd(), newSNESCmd(), newXisoCmd(), newRVZCmd(), newPS3Cmd(), newSavesCmd(), newRelocateCmd())
