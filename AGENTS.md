@@ -13,7 +13,7 @@ reference; keep it in step with behavior changes.
 
 | Path | Purpose |
 |---|---|
-| `cmd/romctl/` | `main.go`: flag parsing and command dispatch. |
+| `cmd/romctl/` | `spf13/cobra` command tree (one file per command/group - `root.go` is shared infra: `appContext`, the first-run/pending-cleanup machinery, `--format` resolution; `help.go` is the hand-tuned man-page-brief help renderer, bypassing cobra's own verbose default; everything else wires a `*cobra.Command` to its `internal/commands` function). `completion`/dynamic system-name completion come from cobra for free. |
 | `internal/` | Everything else, one package per concern — see below. |
 | `Makefile` | `go build`/`test`/`vet` wrappers, plus fetching and building the four native tools (`chdman`, `dolphin-tool`, `extract-xiso`, `skyscraper`) into `internal/tools/data/<goos>_<goarch>/` for embedding. |
 | `.github/workflows/` | `ci.yml` (test/build matrix), `tools.yml` (native tool builds per platform), `release.yml` (assembles per-platform binaries from both). |
@@ -26,7 +26,7 @@ Key `internal/` packages:
 |---|---|
 | `actions` | Dry-run/apply framework (`Runner.Act`), `retire`, cross-platform case-only rename, title-cleaning (`CleanName`). |
 | `library`, `systemdb`, `config` | Library root resolution, the system/class/BIOS tables (plus `SkyscraperPlatform`, a system→Skyscraper-platform-name map built from Skyscraper's real `--help` output, not guessed - some niche/regional systems fall back to the closest real platform, noted inline), the TOML config file parser (`[sync]`/`[scrape]` tables; `github.com/BurntSushi/toml`). |
-| `sync` | rsync/SSH mirroring (`cmd/romctl/main.go`'s `runSync` is a thin wrapper). Device path auto-discovery: unless `[sync] path` overrides it, `sync` reads RetroDECK's own `retrodeck.json` (`paths.rd_home_path`) over SSH, so it's correct whether the install is on internal storage or an SD card with no config needed. `[sync] user` defaults to `deck`. Opens one multiplexed SSH connection (`sshMux`, `ControlMaster`/`ControlPath`) up front, reused by the `retrodeck.json` lookup and every target's rsync, so a password-auth user is prompted once per run instead of once per connection; `sshMux`'s zero value is inactive, so a failure to establish it is a silent, harmless fallback to one prompt per connection. |
+| `sync` | rsync/SSH mirroring (`cmd/romctl/sync.go`'s `RunE` is a thin wrapper). Device path auto-discovery: unless `[sync] path` overrides it, `sync` reads RetroDECK's own `retrodeck.json` (`paths.rd_home_path`) over SSH, so it's correct whether the install is on internal storage or an SD card with no config needed. `[sync] user` defaults to `deck`. Opens one multiplexed SSH connection (`sshMux`, `ControlMaster`/`ControlPath`) up front, reused by the `retrodeck.json` lookup and every target's rsync, so a password-auth user is prompted once per run instead of once per connection; `sshMux`'s zero value is inactive, so a failure to establish it is a silent, harmless fallback to one prompt per connection. |
 | `formats/chd`, `formats/iso9660`, `formats/xiso`, `formats/n64`, `formats/snes`, `formats/cso` | Pure-Go byte-level format detection, plus the ISO9660 writer (replaces `makeps3iso`) and CSO decompressor (replaces `maxcso`). |
 | `archive` | zip/7z/rar listing and extraction (replaces the external `7z` dependency). |
 | `tools` | Resolves `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper`: embedded-for-this-platform first, then `PATH`. CHD, RVZ and Xbox XDVDFS are complex, emulator-sensitive codecs not worth reimplementing; Skyscraper is a mature scraper not worth reimplementing either, see Scope boundaries. |
@@ -83,14 +83,16 @@ Key `internal/` packages:
 ## Go style
 
 - `gofmt`-clean and `go vet`-clean (`gofmt -l .`, `make vet`); CI runs `make vet`.
-- Standard library first; the only third-party dependencies are `pflag`
-  (CLI flags, matching this org's other Go CLIs), `golang.org/x/term`
-  (cross-platform terminal state), `BurntSushi/toml` (config file parsing
-  and `--format=toml` output - the standard library has no TOML support),
-  `gopkg.in/yaml.v3` (`--format=yaml` output - same gap for YAML), and the
-  pure-Go archive/compression libraries in `internal/archive` and
-  `internal/formats/cso` (`bodgit/sevenzip`, `nwaples/rardecode`,
-  `pierrec/lz4`).
+- Standard library first; the only third-party dependencies are
+  `spf13/cobra` (the `cmd/romctl/` command tree - built directly on
+  `spf13/pflag`, so every flag stays POSIX/GNU-style; also where shell
+  completion, including dynamic system-name completion, comes from),
+  `golang.org/x/term` (cross-platform terminal state), `BurntSushi/toml`
+  (config file parsing and `--format=toml` output - the standard library
+  has no TOML support), `gopkg.in/yaml.v3` (`--format=yaml` output - same
+  gap for YAML), and the pure-Go archive/compression libraries in
+  `internal/archive` and `internal/formats/cso` (`bodgit/sevenzip`,
+  `nwaples/rardecode`, `pierrec/lz4`).
 - One command per file under `internal/commands/`; each takes a
   `*library.Library` and, for mutating commands, an `*actions.Runner`.
 - Default to no comments; add one only when the *why* isn't obvious from

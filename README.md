@@ -103,6 +103,19 @@ much slower. To update a tool, bump its `*_REF` in the Makefile and run
 romctl COMMAND [SYSTEM...|all] [--dry-run] [-r ROOT]
 ```
 
+### Shell completion
+
+```sh
+romctl completion bash > /etc/bash_completion.d/romctl   # or see each shell's own instructions:
+romctl completion zsh --help
+romctl completion fish --help
+romctl completion powershell --help
+```
+
+Tab-completes commands, flags, and system names - the last of these reads
+whatever's actually under the resolved library's `roms/` (honoring an
+already-typed `-r`/`--root`), not a fixed list.
+
 Options may appear anywhere on the command line. `ROOT` is the library root
 containing `roms/` and `bios/`. If `-r`/`--root` isn't passed, romctl looks
 for `[library] root` in the config file, then for a `roms/` directory right

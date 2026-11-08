@@ -1,0 +1,45 @@
+package main
+
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/demicloud/romctl/internal/actions"
+	"github.com/demicloud/romctl/internal/commands"
+)
+
+func newRenameCmd() *cobra.Command {
+	cmd := newMutatingCmd("rename [SYSTEM...|all]", "apply the configured naming scheme to loose files (see [naming])")
+	cmd.Flags().String("scheme", "", "")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		scheme, err := resolveScheme(cmd)
+		if err != nil {
+			return err
+		}
+		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
+			return true, commands.Rename(appCtx.lib, runner, systems, scheme)
+		})
+	}
+	return cmd
+}
+
+func newRelocateCmd() *cobra.Command {
+	cmd := newMutatingCmd("relocate [SYSTEM...|all]", "move a misfiled cartridge ROM into its correct system directory")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
+			return commands.Relocate(appCtx.lib, runner, systems)
+		})
+	}
+	return cmd
+}
+
+func newSavesCmd() *cobra.Command {
+	cmd := newMutatingCmd("saves [SYSTEM...|all]", "move stray save/state files out of roms/ into saves/, states/")
+	cmd.Flags().String("dest", "", "")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		dest, _ := cmd.Flags().GetString("dest")
+		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
+			return commands.Saves(appCtx.lib, runner, systems, dest)
+		})
+	}
+	return cmd
+}
