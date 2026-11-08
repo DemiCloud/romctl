@@ -112,26 +112,64 @@ these never overrides an actual `roms/` sitting in the current directory,
 even if it's not the RetroDECK install's own resolved path. Systems are
 directory names under `roms/`; omit them or pass `all` for every system.
 Every mutating command below applies its changes immediately; pass
-`--dry-run`/`-n` to preview instead. By default every command prints a
-one-line summary when it finishes (e.g. `chd: 3 converted, 1 skipped, 0
-failed in 12s`) instead of a line per file; pass `-v`/`--verbose` to also
-print each individual action as it happens. `--dry-run` always previews in
-full regardless of `-v` - that's the point of a dry run. After a mutating
+`--dry-run`/`-n` to preview instead. The first time any mutating command
+(other than `clean`, which always confirms for itself) runs against a
+library root it hasn't touched before, romctl prints a one-time notice -
+what it's about to do and that replaced files aren't actually deleted - and
+asks for confirmation; `--yes` skips it (and any `clean` confirmation too).
+Once confirmed, a root is remembered (see [Configuration](#configuration)'s
+directory) and never asked about again. The check is skipped entirely in a
+non-interactive session (no controlling terminal, e.g. CI/cron), so a
+scripted run is never the first thing to hit a prompt it can't answer.
+
+By default every command prints a one-line summary when it finishes (e.g.
+`chd: 3 converted, 1 skipped, 0 failed in 12s`) instead of a line per file;
+pass `-v`/`--verbose` to also print each individual action as it happens.
+`--dry-run` always previews in full regardless of `-v` - that's the point
+of a dry run. In between, the long-running conversion commands (`chd`,
+`dvd`, `rvz`, `xiso`, `n64`, `snes`, `unpack`) animate a live `done/total`
+counter on stderr so a run across hundreds of files doesn't look stalled;
+like `check`'s own spinner, it's skipped under `-v`/`--dry-run` (which
+already print per-file) and when stderr isn't a terminal. After a mutating
 command finishes, if `[sync] host`/`--sync-host` is configured, romctl also
 prints a one-line reminder to run `sync` and push the changes up.
-Conversion commands (`chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `unpack`)
-convert every matching file across every system given in parallel, scaled
-to available CPU cores - pass one large system to convert, not one call per
-system, to get the full benefit. On Linux, `chd`/`dvd` also stage the
-candidate CHD on `/dev/shm` (tmpfs) when there's room, skipping a
-redundant read-back from a slow ROM library (e.g. an SD card) during
-chdman's own verify step; this is size-aware and silently falls back to
-disk when it isn't safe to use.
+
+### Output format
+
+`--format FMT` controls how every command (`scrape`/`sync` excepted - see
+below) renders its result:
+
+| `FMT` | Behavior |
+|---|---|
+| `fancy` | Colors, unicode symbols (`✓`/`!`/`✗`) and live spinners/progress counters. Default on a terminal. |
+| `plain` | The same text, but bare ASCII (`OK`/`WARN`/`FAIL`) and no color or animation. Default when output is piped/redirected. |
+| `json`, `yaml`, `toml` | Every finding (`check`/`bios`) or a result object (every mutating command: counts, the action log, pass/fail, elapsed seconds) - for scripting, not for reading in a terminal. |
+| `csv` | The same data as a table: one row per finding for `check`/`bios`, one row per command invocation otherwise (so running the same command repeatedly and appending builds a history). |
+
+Auto-detection (`fancy` vs `plain`) is based on whether stdout is a
+terminal, same as `NO_COLOR` (https://no-color.org/, always wins even over
+an explicit `--format=fancy`) and the historical per-command color/spinner
+behavior this replaces. A structured format silences the normal text
+output entirely (no `plan:`/`do:` lines, no spinner, no one-line summary) -
+exactly one encoded result lands on stdout; `clean`'s confirmation prompt
+and listing still go to stderr either way, so it stays interactive even
+under `--format=json`. `scrape` and `sync` are the two exceptions: both
+stream another process's own live/interactive output (Skyscraper, rsync)
+that can't be captured as structured data without losing the thing that
+makes it useful, so `scrape --format=json` (etc.) falls back to plain text
+with a note, and `sync` doesn't take `--format` at all.
+Conversion commands convert every matching file across every system given
+in parallel, scaled to available CPU cores - pass one large system to
+convert, not one call per system, to get the full benefit. On Linux,
+`chd`/`dvd` also stage the candidate CHD on `/dev/shm` (tmpfs) when there's
+room, skipping a redundant read-back from a slow ROM library (e.g. an SD
+card) during chdman's own verify step; this is size-aware and silently
+falls back to disk when it isn't safe to use.
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. |
-| `bios` | Audit BIOS files only. |
+| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. See [Output format](#output-format) for `--format`. |
+| `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
@@ -147,7 +185,7 @@ disk when it isn't safe to use.
 | `saves` | Move stray save/save-state files out of `roms/` into RetroDECK's own `saves/`/`states/` at the library root. See [Stray save files](#stray-save-files). |
 | `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
-| `clean` | Permanently delete `_to_delete/` directories (asks for confirmation first). |
+| `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `systems` | List every known system and its class, whether or not it's populated. |
 
@@ -189,9 +227,10 @@ only behavior):
 | `WARN` | Works, but out of convention: tags, archives, raw disc images, wrong container |
 | `INFO` | Optional improvement or pending cleanup |
 
-A run with no `FAIL` or `WARN` findings ends with `✓ Clean`. Color is used
-only on a terminal and honors `NO_COLOR`; the spinner likewise only
-appears on a terminal (stderr) and never corrupts piped/redirected output.
+A run with no `FAIL` or `WARN` findings ends with `✓ Clean` (`OK Clean`
+under `--format=plain`). See [Output format](#output-format) for the
+fancy/plain/json/yaml/toml/csv split this - and every other command's
+output - follows.
 
 `check --dupes` additionally scans each system for exact (byte-for-byte)
 duplicate files, flagging every copy after the first. This is off by
@@ -366,7 +405,10 @@ archives inconsistently.
 Use a set built for the emulator version actually shipped; ROM definitions
 change between releases, and a mismatched set fails in unpredictable ways.
 Filter to parent sets with working drivers, and keep required BIOS sets
-(`neogeo.zip`, `pgm.zip`, ...) in the same directory as the games.
+(`neogeo.zip`, `pgm.zip`, ...) in the same directory as the games - MAME/FBNeo
+treat these as just another ROM set (a parent other sets point at), not
+firmware, so they belong in `roms/<system>/`, never in `bios/`. See
+[BIOS and firmware](#bios-and-firmware) for what actually goes in `bios/`.
 
 Neo Geo games run best under FBNeo from standard zipped sets. Flash-cart
 formats such as `.neo` are redundant once an FBNeo set is present.
@@ -377,26 +419,62 @@ RetroArch cores read BIOS files from one flat system directory by fixed
 filename; standalone emulators get subdirectories. The layout looks messy, but
 every location is load-bearing. Do not reorganize it.
 
-`romctl bios` reports missing required files for systems that have games, and
-verifies MD5s for files with a single canonical dump.
+`romctl bios` (and `check`'s `bios` category) audits every file below
+against the library's actual systems, at one of three severities:
+
+| Level | When |
+|---|---|
+| `FAIL` | A **required** file is missing or wrong, and the owning system already has games - broken right now. |
+| `WARN` | A **required** file is missing or wrong, but the owning system has no games yet - not broken yet, but will be the moment one's added. Also used for a wrong (not missing) **optional** file - its presence means it's actually in use, so a bad copy is worth a look even though nothing's required. |
+| `INFO` | An **optional** file is simply missing - nothing needs it, ever, regardless of whether the system has games. |
+
+A file with a single canonical dump is verified by MD5; one that's
+inherently per-console or per-revision (PS2, Xbox's `xbox_hdd.qcow2`,
+NDS's `firmware.bin`) is checked by presence (and, for `firmware.bin`,
+size) only - hashing those would flag every genuine console's own copy as
+"wrong." Every MD5 below has been cross-checked against the
+independently-maintained RetroDECK BIOS pack's own per-file manifest, not
+hand-typed from one source.
+
+Both commands normally print only what's actually wrong (same as every
+other check category); `romctl bios -v` instead prints the **full
+inventory** - every file below, including the ones already present and
+correct - so there's one place to see exactly what a given library has,
+is missing, or doesn't need. `--format=json`/`yaml`/`toml`/`csv` works on
+both the problems-only and `-v` full-inventory output.
 
 | System | File(s) in `bios/` | Required | Notes |
 |---|---|---|---|
 | PS1 | `scph5501.bin` (US), `scph5500.bin` (JP), `scph5502.bin` (EU) | One of them | |
 | PS2 | `ps2-*.bin` | Yes | Several valid revisions; no single hash. |
-| PS3 | `rpcs3/dev_flash/` | Yes | Installed PS3 system firmware. |
+| PS3 | `rpcs3/dev_flash/` | Yes | Installed PS3 system firmware, from `PS3UPDAT.PUP` via RPCS3 - not a single file to hash. |
 | Saturn | `mpr-17933.bin` (US/EU v1.01a), `sega_101.bin` (JP) | US/EU file | Names are lowercase and exact. |
 | Sega CD | `bios_CD_U.bin`, `bios_CD_E.bin`, `bios_CD_J.bin` | One of them | |
-| PC Engine CD | `syscard3.pce` | Yes | `syscard1/2.pce` and `gexpress.pce` for a few titles. |
-| Dreamcast | `dc/dc_boot.bin` | Yes | `dc/dc_flash.bin` holds settings and varies. |
+| PC Engine CD / TurboGrafx-CD | `syscard3.pce` | Yes | `syscard1/2.pce` and `gexpress.pce` for a few titles only - optional. |
+| Dreamcast | `dc/dc_boot.bin` | Yes | `dc/dc_flash.bin` holds settings and varies; never checked. |
 | Naomi / Atomiswave | `dc/naomi.zip`, `dc/awbios.zip` | Yes | |
-| Xbox | `mcpx_1.0.bin`, `Complex.bin`, `xbox_hdd.qcow2` | Yes | At the top level of `bios/`, under exactly these names. |
-| Nintendo DS | `bios7.bin`, `bios9.bin`, `firmware.bin` | No | melonDS has free replacements. `firmware.bin` is per-console (256 KiB) and has no canonical hash. |
+| Xbox | `mcpx_1.0.bin`, `Complex.bin`, `xbox_hdd.qcow2` | Yes | At the top level of `bios/`, under exactly these names. `xbox_hdd.qcow2` holds game saves once used - never hashed. |
+| Nintendo DS | `bios7.bin`, `bios9.bin`, `firmware.bin` | No | melonDS has free replacements. `firmware.bin` is per-console (256 KiB, size-checked only - it holds a real console's own Wi-Fi MAC address, so it has no canonical hash). |
 | GB / GBC / GBA / SGB | `gb_bios.bin`, `gbc_bios.bin`, `gba_bios.bin`, `sgb_bios.bin` | No | Boot logos and accuracy edge cases only. |
 | Famicom Disk System | `disksys.rom` | Yes | |
 | Atari 5200 | `5200.rom` | Yes | |
 | Atari Lynx | `lynxboot.img` | Yes | |
+| Atari 7800 | `7800 BIOS (U).rom` | No | A handful of specific titles only; most don't need it. |
 | 3DO | `panafz10.bin` | Yes | |
+| GameCube / Wii | `GC/USA/IPL.bin`, `GC/EUR/IPL.bin`, `GC/JAP/IPL.bin` | No | Dolphin's per-region boot ROM; HLE works fine without it for almost every game. |
+
+Arcade BIOS sets (`neogeo.zip`, `pgm.zip`, ...) are not audited here at
+all: they live inside `roms/<system>/` alongside the game sets (see
+[Arcade](#arcade)), and which specific set a given ROM needs is
+clone/DAT-level information romctl doesn't have - the same reason dump
+verification itself is [out of scope](#out-of-scope).
+
+`bios/` is also checked for the reverse case: a file that doesn't match
+anything in the table above at all (a typo'd name, leftover from a system
+you no longer use, stray OS/editor clutter) is flagged INFO, same
+severity as a missing optional file - it's a heads-up, never a problem.
+A file under an installed, multi-file firmware tree (`rpcs3/dev_flash/`)
+is never flagged this way, since that's not a single file to begin with.
 
 RetroDECK's Configurator also has a BIOS checker; it is authoritative for the
 exact names a given RetroDECK release expects.
@@ -559,7 +637,10 @@ library, across multiple systems and every media type ES-DE writes.
 TOML file (parsed, never sourced). See
 [config.example.toml](config.example.toml) for every key in one place,
 including `[scrape]` (see [Scraping](#scraping)) and `[naming]` (see
-[Naming](#naming)).
+[Naming](#naming)). A `trusted_roots` file next to it (same directory)
+records which library roots have already confirmed the one-time
+first-run notice above - delete a line from it (or the whole file) to be
+asked again for that root.
 
 **The config file is entirely optional.** Every key below also has a CLI
 flag, so a config-free setup (e.g. a first run, or a one-off invocation)

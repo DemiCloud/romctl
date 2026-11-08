@@ -34,7 +34,7 @@ type xisoJob struct {
 // rewrites it as a trimmed, valid XISO.
 func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("xiso")
+	log := cliutil.NewLogger("xiso", runner.Format)
 	var converted, renamed, failed atomic.Int64
 
 	var jobs []xisoJob
@@ -55,49 +55,59 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j xisoJob) {
-		sys, base := j.sys, j.base
-		src := filepath.Join(lib.Roms, sys, base)
-		out := strings.TrimSuffix(src, filepath.Ext(src)) + ".xiso"
-		if exists(out) {
-			return
-		}
-
-		ok, err := xiso.IsXISO(src)
-		if err != nil {
-			return
-		}
-
-		if ok {
-			if runner.Act("rename %s/%s -> %s", sys, base, filepath.Base(out)) {
-				if err := os.Rename(src, out); err != nil {
-					log.Errf("rename failed: %s: %v", src, err)
-					failed.Add(1)
-					return
-				}
-				if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-				}
-				renamed.Add(1)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "xiso", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j xisoJob) {
+			defer tick()
+			sys, base := j.sys, j.base
+			src := filepath.Join(lib.Roms, sys, base)
+			out := strings.TrimSuffix(src, filepath.Ext(src)) + ".xiso"
+			if exists(out) {
+				return
 			}
-			return
-		}
 
-		if !runner.Act("convert %s/%s -> %s", sys, base, filepath.Base(out)) {
-			return
-		}
-		if err := convertToXISO(src, out); err != nil {
-			log.Errf("not an XISO, skipped: %s: %v", src, err)
-			failed.Add(1)
-			return
-		}
-		if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
-			log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-		}
-		converted.Add(1)
+			ok, err := xiso.IsXISO(src)
+			if err != nil {
+				return
+			}
+
+			if ok {
+				if runner.Act("rename %s/%s -> %s", sys, base, filepath.Base(out)) {
+					if err := os.Rename(src, out); err != nil {
+						log.Errf("rename failed: %s: %v", src, err)
+						failed.Add(1)
+						return
+					}
+					if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+					}
+					renamed.Add(1)
+				}
+				return
+			}
+
+			if !runner.Act("convert %s/%s -> %s", sys, base, filepath.Base(out)) {
+				return
+			}
+			if err := convertToXISO(src, out); err != nil {
+				log.Errf("not an XISO, skipped: %s: %v", src, err)
+				failed.Add(1)
+				return
+			}
+			if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			converted.Add(1)
+		})
 	})
 
-	fmt.Printf("xiso: %d converted, %d renamed, %d failed in %s\n", converted.Load(), renamed.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("converted", converted.Load())
+		runner.SetCount("renamed", renamed.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sxiso: %d converted, %d renamed, %d failed in %s%s\n", color, converted.Load(), renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }
 

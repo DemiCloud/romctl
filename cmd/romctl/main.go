@@ -7,6 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	flag "github.com/spf13/pflag"
 
@@ -54,6 +59,7 @@ func run(args []string) int {
 	scrapeUser := fs.String("scrape-user", "", "")
 	scrapeThreads := fs.Int("scrape-threads", 0, "")
 	savesDest := fs.String("dest", "", "")
+	formatFlag := fs.String("format", "", "")
 	help := fs.BoolP("help", "h", false, "")
 	showVersion := fs.Bool("version", false, "")
 
@@ -61,6 +67,13 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
 		return 1
 	}
+
+	format, err := cliutil.ParseFormat(*formatFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cliutil.ProgName(), err)
+		return 1
+	}
+	format = format.Resolve(os.Stdout)
 
 	rest := fs.Args()
 
@@ -90,7 +103,10 @@ func run(args []string) int {
 		usage()
 		return 0
 	case "systems":
-		commands.Systems()
+		if err := commands.Systems(format); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: systems: %v\n", cliutil.ProgName(), err)
+			return 1
+		}
 		return 0
 	}
 
@@ -146,7 +162,13 @@ func run(args []string) int {
 	}
 
 	if !mutatingCommands[cmd] && !readOnlyCommands[cmd] {
-		fmt.Fprintf(os.Stderr, "%s: unknown command: %s (see %s --help)\n", cliutil.ProgName(), cmd, cliutil.ProgName())
+		msg := fmt.Sprintf("unknown command: %s", cmd)
+		if suggestion := cliutil.Suggest(cmd, commandOrder); suggestion != "" {
+			msg += fmt.Sprintf(" (did you mean %q?)", suggestion)
+		} else {
+			msg += fmt.Sprintf(" (see %s --help)", cliutil.ProgName())
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cliutil.ProgName(), msg)
 		return 1
 	}
 
@@ -160,15 +182,45 @@ func run(args []string) int {
 		return 1
 	}
 
-	ok, err := dispatch(cmd, lib, &actions.Runner{DryRun: *dryRun, Verbose: *verbose}, systems, *assumeYes, *showGames, *dupes, *verbose, rootHint, scheme, cfg, *savesDest)
+	if mutatingCommands[cmd] && cmd != "clean" && !*dryRun && !*assumeYes {
+		if !confirmFirstRun(cfgPath, lib.Root) {
+			fmt.Fprintf(os.Stderr, "%s: aborted\n", cliutil.ProgName())
+			return 1
+		}
+	}
+
+	runner := &actions.Runner{DryRun: *dryRun, Verbose: *verbose, Format: format}
+	runStart := time.Now()
+	ok, err := dispatch(cmd, lib, runner, systems, *assumeYes, *showGames, *dupes, *verbose, format, rootHint, scheme, cfg, *savesDest)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s: %v\n", cliutil.ProgName(), cmd, err)
 		return 1
 	}
+
+	// check/bios already encoded their own (richer, per-finding)
+	// structured payload inside Check/Bios; every other mutating command
+	// just reports counts to the shared runner (see actions.Runner.Count/
+	// SetCount), so the one encoded Result for those is built centrally,
+	// here, instead of by each command.
+	if format.Structured() && mutatingCommands[cmd] {
+		result := actions.Result{
+			Command: cmd,
+			Systems: systems,
+			Counts:  runner.Snapshot(),
+			Actions: runner.Log(),
+			Failed:  !ok,
+			Seconds: time.Since(runStart).Seconds(),
+		}
+		if err := encodeResult(os.Stdout, format, result); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %s: %v\n", cliutil.ProgName(), cmd, err)
+			return 1
+		}
+	}
+
 	if !ok {
 		return 1
 	}
-	if mutatingCommands[cmd] && cmd != "clean" && !*dryRun {
+	if mutatingCommands[cmd] && cmd != "clean" && !*dryRun && !format.Structured() {
 		if n := actions.RetiredCount(); n > 0 {
 			fmt.Printf("%d item(s) pending in _to_delete/; run `%s clean` to remove\n", n, cliutil.ProgName())
 		}
@@ -177,6 +229,34 @@ func run(args []string) int {
 		}
 	}
 	return 0
+}
+
+// encodeResult writes result as json/yaml/toml via cliutil.Encode, or as
+// a single-row CSV (counts sorted by key, for a stable column order)
+// since a flat key/value map has no natural row order of its own -
+// Actions is left out of the CSV row: free-text descriptions don't fit a
+// tabular column, so a CSV consumer gets the same counts/duration/failed
+// summary a json/yaml/toml consumer gets, minus the action log. The
+// overall pass/fail column is named "overall_failed", not "failed": most
+// commands already report their own "failed" count among Counts, and a
+// header can't repeat a column name.
+func encodeResult(w io.Writer, format cliutil.Format, result actions.Result) error {
+	if format != cliutil.FormatCSV {
+		return cliutil.Encode(w, format, result)
+	}
+	keys := make([]string, 0, len(result.Counts))
+	for k := range result.Counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	header := append([]string{"command", "systems"}, keys...)
+	header = append(header, "overall_failed", "seconds")
+	row := []string{result.Command, strings.Join(result.Systems, ";")}
+	for _, k := range keys {
+		row = append(row, strconv.FormatInt(result.Counts[k], 10))
+	}
+	row = append(row, strconv.FormatBool(result.Failed), strconv.FormatFloat(result.Seconds, 'f', -1, 64))
+	return cliutil.EncodeCSV(w, header, [][]string{row})
 }
 
 // resolveRoot picks the library root: an explicit `-r`/`--root` flag wins
@@ -206,14 +286,57 @@ func resolveRoot(flagRoot string, flagChanged bool, cfgRoot string) string {
 	return flagRoot
 }
 
-func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes, verbose bool, rootHint string, scheme actions.Scheme, cfg config.Config, savesDest string) (bool, error) {
+// confirmFirstRun asks a one-time "this will modify files" notice the
+// first time any mutating command runs against root, so someone who
+// skipped the README still gets a chance to back out before romctl
+// touches a library it's never seen before - clean's own narrower,
+// every-time confirmation (it's the one step that's actually
+// irreversible) already covers that command, so this only gates every
+// other mutating command. Roots that have confirmed once are remembered
+// in a marker file next to the config file, keyed by absolute path, so
+// the notice never repeats for the same root. Skipped entirely (treated
+// as already confirmed) when stdin isn't a terminal, so a scripted/CI/cron
+// run is never the first thing to hit a prompt it can't answer.
+func confirmFirstRun(cfgPath, root string) bool {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		abs = root
+	}
+	markerPath := filepath.Join(filepath.Dir(cfgPath), "trusted_roots")
+	if data, err := os.ReadFile(markerPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == abs {
+				return true
+			}
+		}
+	}
+	if !cliutil.Interactive() {
+		return true
+	}
+
+	fmt.Printf("romctl hasn't touched %s before.\n", abs)
+	fmt.Println("This command will modify files under it. Replaced originals are moved to _to_delete/, not deleted, until `clean` removes them. Pass --yes to skip this and every other confirmation.")
+	if !cliutil.Confirm("Continue?") {
+		return false
+	}
+
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err == nil {
+		if f, err := os.OpenFile(markerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, abs)
+			f.Close()
+		}
+	}
+	return true
+}
+
+func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems []string, assumeYes, showGames, dupes, verbose bool, format cliutil.Format, rootHint string, scheme actions.Scheme, cfg config.Config, savesDest string) (bool, error) {
 	switch cmd {
 	case "check":
-		return commands.Check(lib, systems, dupes, scheme, verbose, rootHint)
+		return commands.Check(lib, systems, dupes, scheme, verbose, format, rootHint)
 	case "bios":
-		return commands.Bios(lib, systems)
+		return commands.Bios(lib, systems, verbose, format)
 	case "list":
-		return true, commands.List(lib, systems, showGames)
+		return true, commands.List(lib, systems, showGames, format)
 	case "fix":
 		return commands.Fix(lib, runner, systems, scheme, savesDest)
 	case "rename":
@@ -263,8 +386,9 @@ const (
 	flagDryRun        = "  -n, --dry-run           preview changes instead of making them (default: apply)"
 	flagGames         = "  -g, --games             also print each game's title"
 	flagDupes         = "      --dupes             also scan for exact duplicate files"
+	flagFormat        = "      --format FMT        fancy, plain, json, yaml, toml, csv (default: fancy on a terminal, else plain)"
 	flagVerbose       = "  -v, --verbose           print every finding/action instead of a one-line summary"
-	flagYes           = "      --yes               skip the confirmation prompt"
+	flagYes           = "      --yes               skip confirmation prompts (clean; first-run library notice)"
 	flagPull          = "      --pull              pull from the device instead of pushing"
 	flagScheme        = "      --scheme SCHEME     naming scheme: notag, keep, no-intro, redump (default: [naming] scheme, else keep)"
 	flagSyncHost      = "      --sync-host HOST    device hostname/IP (default: [sync] host)"
@@ -291,27 +415,43 @@ var commandOrder = []string{
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems",
 }
 
+// commandGroups orders commandOrder's same 20 names into sections for
+// usage()'s display: the 3 commands most sessions actually use, the 12
+// individual steps fix chains (kept as real top-level commands - for
+// testing one step in isolation, or re-running just the one that failed -
+// but visually set apart so the top-level help reads as a handful of
+// verbs instead of twenty), then everything else.
+var commandGroups = []struct {
+	label string
+	names []string
+}{
+	{"", []string{"check", "fix", "sync"}},
+	{"Individual fix steps (what `fix` runs, in order):",
+		[]string{"relocate", "unpack", "chd", "dvd", "rvz", "xiso", "n64", "snes", "ps3", "m3u", "rename", "saves"}},
+	{"Other:", []string{"bios", "list", "scrape", "clean", "systems"}},
+}
+
 var commandTable = map[string]cmdInfo{
-	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme}},
-	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
-	"list":     {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
-	"fix":      {"run every local fix step: relocate, unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest}},
-	"rename":   {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"unpack":   {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"chd":      {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"m3u":      {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"dvd":      {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"n64":      {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"snes":     {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"xiso":     {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"rvz":      {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"ps3":      {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
-	"saves":    {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest}},
-	"relocate": {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
-	"scrape":   {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads}},
-	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes}},
+	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme, flagFormat}},
+	"bios":     {"audit BIOS files only (-v for the full inventory)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"list":     {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
+	"fix":      {"run every local fix step: relocate, unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest, flagFormat}},
+	"rename":   {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
+	"unpack":   {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"chd":      {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
+	"m3u":      {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"dvd":      {"re-encode DVD images stored as CD-type CHDs", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"n64":      {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"snes":     {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"xiso":     {"rename Xbox XISO images from .iso to .xiso", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"rvz":      {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"ps3":      {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},
+	"saves":    {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest, flagFormat}},
+	"relocate": {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"scrape":   {"fetch game metadata/media via Skyscraper (needs [scrape] user)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
+	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
 	"sync":     {"mirror roms/bios/media to a device (needs [sync] host)", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
-	"systems":  {"list every known system and its class (not just populated ones)", "", nil},
+	"systems":  {"list every known system and its class (not just populated ones)", "", []string{flagFormat}},
 }
 
 func usage() {
@@ -321,17 +461,8 @@ func usage() {
 Usage: %s COMMAND [SYSTEM...|all] [options]
        %s help COMMAND
 
-Options:
-%s
-%s
-%s
-%s
-%s
-%s
-%s
-%s
-%s
-%s
+Global options (apply to most commands; see '%s help COMMAND' for a
+command's own options, e.g. --scheme, --sync-host, --scrape-user):
 %s
 %s
 %s
@@ -341,11 +472,14 @@ Options:
 %s
 
 Commands:
-`, prog, prog, flagRoot, flagDryRun, flagGames, flagDupes, flagVerbose, flagYes, flagPull, flagScheme,
-		flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude, flagScrapeUser, flagScrapeThreads,
-		flagDest, flagHelp, flagVersion)
-	for _, name := range commandOrder {
-		fmt.Printf("  %-8s %s\n", name, commandTable[name].desc)
+`, prog, prog, prog, flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat, flagHelp, flagVersion)
+	for _, g := range commandGroups {
+		if g.label != "" {
+			fmt.Printf("\n  %s\n", g.label)
+		}
+		for _, name := range g.names {
+			fmt.Printf("  %-8s %s\n", name, commandTable[name].desc)
+		}
 	}
 }
 
@@ -358,7 +492,13 @@ func commandHelp(cmd string) int {
 	}
 	info, ok := commandTable[cmd]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "%s: unknown command: %s (see %s --help)\n", cliutil.ProgName(), cmd, cliutil.ProgName())
+		msg := fmt.Sprintf("unknown command: %s", cmd)
+		if suggestion := cliutil.Suggest(cmd, commandOrder); suggestion != "" {
+			msg += fmt.Sprintf(" (did you mean %q?)", suggestion)
+		} else {
+			msg += fmt.Sprintf(" (see %s --help)", cliutil.ProgName())
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cliutil.ProgName(), msg)
 		return 1
 	}
 	prog := cliutil.ProgName()

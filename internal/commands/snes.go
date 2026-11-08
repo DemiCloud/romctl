@@ -27,7 +27,7 @@ type snesJob struct {
 // SNES strips 512-byte copier headers and renames .smc to .sfc.
 func SNES(lib *library.Library, runner *actions.Runner, systems []string) error {
 	start := time.Now()
-	log := cliutil.NewLogger("snes")
+	log := cliutil.NewLogger("snes", runner.Format)
 	var processed, failed atomic.Int64
 
 	var jobs []snesJob
@@ -52,38 +52,25 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j snesJob) {
-		sys, base := j.sys, j.base
-		src := filepath.Join(lib.Roms, sys, base)
-		out := strings.TrimSuffix(src, filepath.Ext(src)) + ".sfc"
-		outBase := filepath.Base(out)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "snes", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j snesJob) {
+			defer tick()
+			sys, base := j.sys, j.base
+			src := filepath.Join(lib.Roms, sys, base)
+			out := strings.TrimSuffix(src, filepath.Ext(src)) + ".sfc"
+			outBase := filepath.Base(out)
 
-		info, err := os.Stat(src)
-		if err != nil {
-			return
-		}
-		switch {
-		case snes.HasHeader(info.Size()):
-			if !runner.Act("strip header %s/%s -> %s", sys, base, outBase) {
+			info, err := os.Stat(src)
+			if err != nil {
 				return
 			}
-			if err := stripSNESHeader(src, out); err != nil {
-				log.Errf("strip header failed: %s/%s: %v", sys, base, err)
-				failed.Add(1)
-				return
-			}
-			if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			processed.Add(1)
-		case src != out:
-			if exists(out) {
-				log.Errf("exists, skipped: %s", out)
-				return
-			}
-			if runner.Act("rename %s/%s -> %s", sys, base, outBase) {
-				if err := os.Rename(src, out); err != nil {
-					log.Errf("rename failed: %s/%s: %v", sys, base, err)
+			switch {
+			case snes.HasHeader(info.Size()):
+				if !runner.Act("strip header %s/%s -> %s", sys, base, outBase) {
+					return
+				}
+				if err := stripSNESHeader(src, out); err != nil {
+					log.Errf("strip header failed: %s/%s: %v", sys, base, err)
 					failed.Add(1)
 					return
 				}
@@ -91,10 +78,32 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
 				processed.Add(1)
+			case src != out:
+				if exists(out) {
+					log.Errf("exists, skipped: %s", out)
+					return
+				}
+				if runner.Act("rename %s/%s -> %s", sys, base, outBase) {
+					if err := os.Rename(src, out); err != nil {
+						log.Errf("rename failed: %s/%s: %v", sys, base, err)
+						failed.Add(1)
+						return
+					}
+					if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
+						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+					}
+					processed.Add(1)
+				}
 			}
-		}
+		})
 	})
-	fmt.Printf("snes: %d processed, %d failed in %s\n", processed.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("processed", processed.Load())
+		runner.SetCount("failed", failed.Load())
+		return nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%ssnes: %d processed, %d failed in %s%s\n", color, processed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return nil
 }
 

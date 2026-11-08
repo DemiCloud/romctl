@@ -29,7 +29,7 @@ type dvdJob struct {
 // titles dumped before this distinction mattered) as proper DVD-type CHDs.
 func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("dvd")
+	log := cliutil.NewLogger("dvd", runner.Format)
 	var converted, failed atomic.Int64
 
 	var jobs []dvdJob
@@ -50,23 +50,32 @@ func DVD(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j dvdJob) {
-		path := filepath.Join(lib.Roms, j.sys, j.base)
-		kind, err := chd.Classify(path)
-		if err != nil || kind != chd.KindCDAsDVDMAGE {
-			return
-		}
-		if !runner.Act("re-encode %s/%s as DVD CHD", j.sys, j.base) {
-			return
-		}
-		if err := reencodeAsDVD(path); err != nil {
-			log.Errf("failed, original kept: %s: %v", path, err)
-			failed.Add(1)
-			return
-		}
-		converted.Add(1)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "dvd", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j dvdJob) {
+			defer tick()
+			path := filepath.Join(lib.Roms, j.sys, j.base)
+			kind, err := chd.Classify(path)
+			if err != nil || kind != chd.KindCDAsDVDMAGE {
+				return
+			}
+			if !runner.Act("re-encode %s/%s as DVD CHD", j.sys, j.base) {
+				return
+			}
+			if err := reencodeAsDVD(path); err != nil {
+				log.Errf("failed, original kept: %s: %v", path, err)
+				failed.Add(1)
+				return
+			}
+			converted.Add(1)
+		})
 	})
-	fmt.Printf("dvd: %d converted, %d failed in %s\n", converted.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("converted", converted.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sdvd: %d converted, %d failed in %s%s\n", color, converted.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }
 

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/demicloud/romctl/internal/actions"
@@ -23,8 +22,8 @@ import (
 
 // Check audits every system (structure, naming, formats) and BIOS files,
 // then prints the Checklist, a Fixes section (how to resolve what was
-// found), and a colorized Summary, and reports whether anything FAILed.
-// dupes additionally scans each system for exact (byte-for-byte) duplicate
+// found), and the Summary, and reports whether anything FAILed. dupes
+// additionally scans each system for exact (byte-for-byte) duplicate
 // files - off by default since, unlike every other check, it has to read
 // every file's full content. scheme (`[naming] scheme`) is the
 // naming-audit category's yardstick: a name internal/actions.ApplyScheme
@@ -33,27 +32,30 @@ import (
 // spinners, which would otherwise collide with that output); rootHint, if
 // non-empty (an explicitly-passed "-r PATH"), is spliced into every
 // suggested command. Each category runs across every system in parallel -
-// independent, I/O-bound work, most visibly worthwhile for --dupes.
-func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme, verbose bool, rootHint string) (bool, error) {
-	report := audit.New(os.Stdout, verbose, rootHint)
+// independent, I/O-bound work, most visibly worthwhile for --dupes. Under
+// a structured format (json/yaml/toml/csv), the Checklist/Fixes text is
+// skipped entirely and every finding plus the summary tally is encoded
+// instead - see audit.Report.Encode.
+func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Scheme, verbose bool, format cliutil.Format, rootHint string) (bool, error) {
+	report := audit.New(os.Stdout, verbose, format, rootHint)
 
-	cliutil.RunPhase(verbose, "naming (tags, articles)", func() {
+	cliutil.RunPhase(format, verbose, "naming (tags, articles)", func() {
 		cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
 	})
 	esdeNames, _ := lib.ESDESystems()
-	cliutil.RunPhase(verbose, "structure (leftovers, playlists)", func() {
+	cliutil.RunPhase(format, verbose, "structure (leftovers, playlists)", func() {
 		cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
 		checkUnknownSystems(report, lib, systems)
 	})
-	cliutil.RunPhase(verbose, "containers (formats, conversions)", func() {
+	cliutil.RunPhase(format, verbose, "containers (formats, conversions)", func() {
 		cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys, esdeNames) })
 	})
-	cliutil.RunPhase(verbose, "bios (presence, hashes)", func() {
+	cliutil.RunPhase(format, verbose, "bios (presence, hashes)", func() {
 		checkBios(report, lib, systems)
 	})
 	if dupes {
 		report.EnableDuplicates()
-		cliutil.RunPhase(verbose, "duplicates (exact content matches)", func() {
+		cliutil.RunPhase(format, verbose, "duplicates (exact content matches)", func() {
 			// Systems stay sequential here, unlike every other phase above:
 			// checkDuplicates already parallelizes the expensive part (hashing
 			// full file content) across a worker pool sized to GOMAXPROCS.
@@ -66,21 +68,13 @@ func Check(lib *library.Library, systems []string, dupes bool, scheme actions.Sc
 		})
 	}
 
-	colors := cliutil.NewColors(os.Stdout)
-	report.Checklist(os.Stdout, colors)
-	report.Fixes(os.Stdout)
-	report.Summary(os.Stdout, colors)
-	return !report.Failed(), nil
-}
-
-// Bios audits only BIOS files.
-func Bios(lib *library.Library, systems []string) (bool, error) {
-	report := audit.New(os.Stdout, false, "")
-	checkBios(report, lib, systems)
-	if report.BiosSkipped() {
-		fmt.Println("no bios/ directory; skipping BIOS checks")
+	if format.Structured() {
+		return !report.Failed(), report.Encode(os.Stdout, format)
 	}
-	report.Summary(os.Stdout, cliutil.NewColors(os.Stdout))
+
+	report.Checklist(os.Stdout)
+	report.Fixes(os.Stdout)
+	report.Summary(os.Stdout)
 	return !report.Failed(), nil
 }
 
@@ -401,52 +395,6 @@ func checkXbox(report *audit.Report, sys, base, filePath string, isISO bool) {
 	}
 	if !ok {
 		report.Add(audit.Fail, audit.CategoryContainers, sys, base, "not a valid XISO", "")
-	}
-}
-
-func checkBios(report *audit.Report, lib *library.Library, systems []string) {
-	if info, err := os.Stat(lib.Bios); err != nil || !info.IsDir() {
-		report.SkipBios()
-		return
-	}
-
-	for _, sys := range systems {
-		groups, ok := systemdb.BiosRequired[sys]
-		if !ok || !library.HasGames(filepath.Join(lib.Roms, sys)) {
-			continue
-		}
-		for _, group := range groups {
-			found := false
-			for _, alt := range group {
-				matches, _ := filepath.Glob(filepath.Join(lib.Bios, alt))
-				if len(matches) > 0 {
-					found = true
-				}
-			}
-			if !found {
-				report.Add(audit.Fail, audit.CategoryBios, sys, "bios/"+strings.Join(group, "|"), "required BIOS missing", "")
-			}
-		}
-	}
-
-	for name, wantSum := range systemdb.BiosMD5 {
-		path := filepath.Join(lib.Bios, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		sum := md5Hex(data)
-		if sum != wantSum {
-			report.Add(audit.Fail, audit.CategoryBios, "bios", name,
-				fmt.Sprintf("MD5 %s does not match reference %s", sum, wantSum), "")
-		}
-	}
-
-	if info, err := os.Stat(filepath.Join(lib.Bios, "firmware.bin")); err == nil {
-		if info.Size() != 262144 {
-			report.Add(audit.Warn, audit.CategoryBios, "bios", "firmware.bin",
-				"unexpected size for DS firmware (want "+strconv.Itoa(262144)+")", "")
-		}
 	}
 }
 

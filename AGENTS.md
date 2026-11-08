@@ -85,10 +85,12 @@ Key `internal/` packages:
 - `gofmt`-clean and `go vet`-clean (`gofmt -l .`, `make vet`); CI runs `make vet`.
 - Standard library first; the only third-party dependencies are `pflag`
   (CLI flags, matching this org's other Go CLIs), `golang.org/x/term`
-  (cross-platform terminal state), `BurntSushi/toml` (config file parsing -
-  the standard library has no TOML support), and the pure-Go archive/
-  compression libraries in `internal/archive` and `internal/formats/cso`
-  (`bodgit/sevenzip`, `nwaples/rardecode`, `pierrec/lz4`).
+  (cross-platform terminal state), `BurntSushi/toml` (config file parsing
+  and `--format=toml` output - the standard library has no TOML support),
+  `gopkg.in/yaml.v3` (`--format=yaml` output - same gap for YAML), and the
+  pure-Go archive/compression libraries in `internal/archive` and
+  `internal/formats/cso` (`bodgit/sevenzip`, `nwaples/rardecode`,
+  `pierrec/lz4`).
 - One command per file under `internal/commands/`; each takes a
   `*library.Library` and, for mutating commands, an `*actions.Runner`.
 - Default to no comments; add one only when the *why* isn't obvious from

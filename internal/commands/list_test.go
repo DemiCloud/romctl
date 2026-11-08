@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/demicloud/romctl/internal/cliutil"
 )
 
 // TestListUsesSystemsTxtOverride guards the systems.txt cross-check: when
@@ -20,7 +22,7 @@ func TestListUsesSystemsTxtOverride(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if err := List(lib, []string{"psx"}, false); err != nil {
+		if err := List(lib, []string{"psx"}, false, cliutil.FormatPlain); err != nil {
 			t.Fatal(err)
 		}
 	})

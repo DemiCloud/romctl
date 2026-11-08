@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/demicloud/romctl/internal/cliutil"
 )
 
 // Library is a resolved romctl library root.
@@ -72,11 +74,32 @@ func (l *Library) ResolveSystems(args []string) ([]string, error) {
 	for _, s := range args {
 		info, err := os.Stat(filepath.Join(l.Roms, s))
 		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("no such system directory: %s", filepath.Join(l.Roms, s))
+			msg := fmt.Sprintf("no such system directory: %s", filepath.Join(l.Roms, s))
+			if suggestion := cliutil.Suggest(s, l.existingSystems()); suggestion != "" {
+				msg += fmt.Sprintf(" (did you mean %q?)", suggestion)
+			}
+			return nil, fmt.Errorf("%s", msg)
 		}
 		systems = append(systems, s)
 	}
 	return systems, nil
+}
+
+// existingSystems lists the actual directories under Roms, for Suggest to
+// match a typo'd system name against - a suggestion naming a directory
+// that doesn't actually exist would be worse than no suggestion at all.
+func (l *Library) existingSystems() []string {
+	entries, err := os.ReadDir(l.Roms)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
 
 // ESDESystems reads <Root>/systems.txt - a convenience file ES-DE itself

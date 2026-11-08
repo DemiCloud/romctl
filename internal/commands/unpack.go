@@ -29,7 +29,7 @@ type unpackJob struct {
 // to promote).
 func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("unpack")
+	log := cliutil.NewLogger("unpack", runner.Format)
 	var unpacked, skipped, failed atomic.Int64
 
 	var jobs []unpackJob
@@ -56,47 +56,57 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j unpackJob) {
-		sys, base := j.sys, j.base
-		sysDir := filepath.Join(lib.Roms, sys)
-		archivePath := filepath.Join(sysDir, base)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "unpack", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j unpackJob) {
+			defer tick()
+			sys, base := j.sys, j.base
+			sysDir := filepath.Join(lib.Roms, sys)
+			archivePath := filepath.Join(sysDir, base)
 
-		// Listing the sole entry's name doesn't require extracting
-		// anything, so an already-unpacked archive (very common on a
-		// re-run) can be skipped before paying for a full extraction -
-		// and, just as importantly, counted separately from a real
-		// failure instead of inflating it.
-		innerName, single, err := archive.SoleEntry(archivePath)
-		if err != nil {
-			log.Errf("unreadable archive: %s", archivePath)
-			failed.Add(1)
-			return
-		}
-		if !single {
-			log.Errf("multi-file archive, skipped: %s/%s", sys, base)
-			return
-		}
-		innerExt := strings.ToLower(filepath.Ext(innerName))
-		stem := strings.TrimSuffix(base, filepath.Ext(base))
-		out := filepath.Join(sysDir, stem+innerExt)
-		if exists(out) {
-			skipped.Add(1)
-			return
-		}
-		if !runner.Act("unpack %s/%s", sys, base) {
-			return
-		}
-		if err := unpackOne(sysDir, archivePath, out); err != nil {
-			log.Errf("%v", err)
-			failed.Add(1)
-			return
-		}
-		if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
-			log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-		}
-		unpacked.Add(1)
+			// Listing the sole entry's name doesn't require extracting
+			// anything, so an already-unpacked archive (very common on a
+			// re-run) can be skipped before paying for a full extraction -
+			// and, just as importantly, counted separately from a real
+			// failure instead of inflating it.
+			innerName, single, err := archive.SoleEntry(archivePath)
+			if err != nil {
+				log.Errf("unreadable archive: %s", archivePath)
+				failed.Add(1)
+				return
+			}
+			if !single {
+				log.Errf("multi-file archive, skipped: %s/%s", sys, base)
+				return
+			}
+			innerExt := strings.ToLower(filepath.Ext(innerName))
+			stem := strings.TrimSuffix(base, filepath.Ext(base))
+			out := filepath.Join(sysDir, stem+innerExt)
+			if exists(out) {
+				skipped.Add(1)
+				return
+			}
+			if !runner.Act("unpack %s/%s", sys, base) {
+				return
+			}
+			if err := unpackOne(sysDir, archivePath, out); err != nil {
+				log.Errf("%v", err)
+				failed.Add(1)
+				return
+			}
+			if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			unpacked.Add(1)
+		})
 	})
-	fmt.Printf("unpack: %d unpacked, %d skipped, %d failed in %s\n", unpacked.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("unpacked", unpacked.Load())
+		runner.SetCount("skipped", skipped.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sunpack: %d unpacked, %d skipped, %d failed in %s%s\n", color, unpacked.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }
 

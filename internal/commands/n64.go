@@ -27,7 +27,7 @@ type n64Job struct {
 // N64 normalizes N64 ROMs to big-endian .z64.
 func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 	start := time.Now()
-	log := cliutil.NewLogger("n64")
+	log := cliutil.NewLogger("n64", runner.Format)
 	var normalized, failed atomic.Int64
 
 	var jobs []n64Job
@@ -52,37 +52,46 @@ func N64(lib *library.Library, runner *actions.Runner, systems []string) error {
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j n64Job) {
-		sys, base := j.sys, j.base
-		src := filepath.Join(lib.Roms, sys, base)
-		order, err := n64.Detect(src)
-		if err != nil || order == n64.OrderUnknown {
-			log.Errf("unknown N64 header: %s/%s", sys, base)
-			return
-		}
-		out := strings.TrimSuffix(src, filepath.Ext(src)) + ".z64"
-		if order == n64.OrderZ64 && src == out {
-			return
-		}
-		if exists(out) && src != out {
-			log.Errf("exists, skipped: %s", out)
-			return
-		}
-		outBase := filepath.Base(out)
-		if !runner.Act("normalize %s/%s -> %s", sys, base, outBase) {
-			return
-		}
-		if err := normalizeN64(src, out, order); err != nil {
-			log.Errf("conversion failed: %s/%s: %v", sys, base, err)
-			failed.Add(1)
-			return
-		}
-		if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
-			log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-		}
-		normalized.Add(1)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "n64", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j n64Job) {
+			defer tick()
+			sys, base := j.sys, j.base
+			src := filepath.Join(lib.Roms, sys, base)
+			order, err := n64.Detect(src)
+			if err != nil || order == n64.OrderUnknown {
+				log.Errf("unknown N64 header: %s/%s", sys, base)
+				return
+			}
+			out := strings.TrimSuffix(src, filepath.Ext(src)) + ".z64"
+			if order == n64.OrderZ64 && src == out {
+				return
+			}
+			if exists(out) && src != out {
+				log.Errf("exists, skipped: %s", out)
+				return
+			}
+			outBase := filepath.Base(out)
+			if !runner.Act("normalize %s/%s -> %s", sys, base, outBase) {
+				return
+			}
+			if err := normalizeN64(src, out, order); err != nil {
+				log.Errf("conversion failed: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
+			}
+			if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			normalized.Add(1)
+		})
 	})
-	fmt.Printf("n64: %d normalized, %d failed in %s\n", normalized.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("normalized", normalized.Load())
+		runner.SetCount("failed", failed.Load())
+		return nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sn64: %d normalized, %d failed in %s%s\n", color, normalized.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return nil
 }
 

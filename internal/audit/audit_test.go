@@ -4,18 +4,20 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/demicloud/romctl/internal/cliutil"
 )
 
 func TestAddVerboseGating(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Warn, CategoryNaming, "psx", "Game.chd", "naming -> \"Game\"", "rename")
 	if buf.Len() != 0 {
 		t.Errorf("non-verbose Add() printed a line, want nothing buffered: %q", buf.String())
 	}
 
 	buf.Reset()
-	rv := New(&buf, true, "")
+	rv := New(&buf, true, cliutil.FormatPlain, "")
 	rv.Add(Warn, CategoryNaming, "psx", "Game.chd", "naming -> \"Game\"", "rename")
 	if buf.Len() == 0 {
 		t.Error("verbose Add() printed nothing, want a line")
@@ -24,7 +26,7 @@ func TestAddVerboseGating(t *testing.T) {
 
 func TestAddCommandHintIncludesRootHint(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, true, "-r /scratch")
+	r := New(&buf, true, cliutil.FormatPlain, "-r /scratch")
 	r.Add(Warn, CategoryNaming, "psx", "Game.chd", "naming -> \"Game\"", "rename")
 	out := buf.String()
 	if !strings.Contains(out, "-r /scratch") {
@@ -37,7 +39,7 @@ func TestAddCommandHintIncludesRootHint(t *testing.T) {
 
 func TestAddUnknownFixTreatedAsNoCommand(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, true, "")
+	r := New(&buf, true, cliutil.FormatPlain, "")
 	r.Add(Fail, CategoryBios, "bios", "scph5501.bin", "required BIOS missing", "not-a-real-command")
 	if strings.Contains(buf.String(), "[") {
 		t.Errorf("an unrecognized fix should not be rendered as a command hint, got: %q", buf.String())
@@ -46,7 +48,7 @@ func TestAddUnknownFixTreatedAsNoCommand(t *testing.T) {
 
 func TestFixesCollapsesCommandBackedFindings(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Warn, CategoryNaming, "psx", "A.chd", "naming -> \"A\"", "rename")
 	r.Add(Warn, CategoryNaming, "snes", "B.sfc", "naming -> \"B\"", "rename")
 	r.Add(Warn, CategoryContainers, "psx", "C.cue", "raw/archived disc image; convert to CHD", "chd")
@@ -68,7 +70,7 @@ func TestFixesCollapsesCommandBackedFindings(t *testing.T) {
 
 func TestFixesListsNoCommandFindingsIndividuallyWithTheRealFile(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Fail, CategoryBios, "psx", "bios/scph5501.bin|scph5502.bin", "required BIOS missing", "")
 	r.Add(Fail, CategoryBios, "bios", "dc_boot.bin", "MD5 ab12 does not match reference cd34", "")
 
@@ -89,7 +91,7 @@ func TestFixesListsNoCommandFindingsIndividuallyWithTheRealFile(t *testing.T) {
 
 func TestFixesFallsBackToRawMessageWhenNoExplanationMatches(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Warn, CategoryContainers, "ps3", "SomeGame", "a completely novel finding text", "")
 
 	var out bytes.Buffer
@@ -102,7 +104,7 @@ func TestFixesFallsBackToRawMessageWhenNoExplanationMatches(t *testing.T) {
 
 func TestFixesEmptyWhenNothingFound(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	var out bytes.Buffer
 	r.Fixes(&out)
 	if out.Len() != 0 {
@@ -112,7 +114,7 @@ func TestFixesEmptyWhenNothingFound(t *testing.T) {
 
 func TestChecklistAndSummaryStillWork(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(&buf, false, "")
+	r := New(&buf, false, cliutil.FormatPlain, "")
 	r.Add(Fail, CategoryContainers, "psx", "Game.chd", "not a valid CHD", "")
 	if !r.Failed() {
 		t.Error("Failed() should be true after a Fail-level Add")

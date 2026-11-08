@@ -16,7 +16,7 @@ import (
 // (non-interactive runs, e.g. CI, never delete without it: Confirm
 // defaults to "no" when stdin isn't a terminal).
 func Clean(lib *library.Library, runner *actions.Runner, systems []string, assumeYes bool) error {
-	log := cliutil.NewLogger("clean")
+	log := cliutil.NewLogger("clean", runner.Format)
 
 	type target struct {
 		sys, dir string
@@ -30,28 +30,70 @@ func Clean(lib *library.Library, runner *actions.Runner, systems []string, assum
 		}
 	}
 	if len(targets) == 0 {
-		colors := cliutil.NewColors(os.Stdout)
-		fmt.Printf("%s✓ nothing to clean%s\n", colors.Green, colors.Reset)
+		if runner.Format.Structured() {
+			runner.SetCount("deleted", 0)
+			return nil
+		}
+		colors := cliutil.ColorsFor(runner.Format)
+		sym := "OK"
+		if runner.Format.Fancy() {
+			sym = "✓"
+		}
+		fmt.Printf("%s%s nothing to clean%s\n", colors.Green, sym, colors.Reset)
 		return nil
 	}
 
 	// Measuring each _to_delete/ (a full directory walk) is the only slow
-	// part here - do it for every system up front, in parallel, before the
-	// loop below, which must stay sequential since it prompts
-	// interactively per system.
+	// part here - do it for every system up front, in parallel.
 	cliutil.Parallel(targets, func(t *target) { t.size = dirSize(t.dir) })
 
+	var toDelete []*target
+	var total int64
 	for _, t := range targets {
 		if !runner.Act("delete %s/_to_delete (%s)", t.sys, humanSize(t.size)) {
 			continue
 		}
-		if !assumeYes && !cliutil.Confirm(fmt.Sprintf("Permanently delete %s? This cannot be undone.", t.dir)) {
-			log.Errf("skipped (not confirmed): %s", t.dir)
-			continue
+		toDelete = append(toDelete, t)
+		total += t.size
+	}
+	if len(toDelete) == 0 {
+		if runner.Format.Structured() {
+			runner.SetCount("deleted", 0)
 		}
+		return nil
+	}
+
+	// One confirmation for the whole batch instead of one per system: a
+	// multi-system `clean all` would otherwise mean answering the same
+	// question a dozen times in a row for no added safety. This - like
+	// Confirm's own prompt - always goes to stderr, not stdout: stdout
+	// stays reserved for the structured payload when one is requested, and
+	// it's confirmation-aid text either way, not clean's actual result.
+	if !assumeYes {
+		fmt.Fprintln(os.Stderr, "This will permanently delete:")
+		for _, t := range toDelete {
+			fmt.Fprintf(os.Stderr, "  %s (%s)\n", t.dir, humanSize(t.size))
+		}
+		if !cliutil.Confirm(fmt.Sprintf("Permanently delete %d item(s) totaling %s? This cannot be undone.", len(toDelete), humanSize(total))) {
+			log.Errf("skipped (not confirmed)")
+			if runner.Format.Structured() {
+				runner.SetCount("deleted", 0)
+			}
+			return nil
+		}
+	}
+	var deleted, failed int64
+	for _, t := range toDelete {
 		if err := os.RemoveAll(t.dir); err != nil {
 			log.Errf("delete failed: %s: %v", t.dir, err)
+			failed++
+			continue
 		}
+		deleted++
+	}
+	if runner.Format.Structured() {
+		runner.SetCount("deleted", deleted)
+		runner.SetCount("failed", failed)
 	}
 	return nil
 }

@@ -68,7 +68,11 @@ var SystemClass = map[string]Class{
 type BiosGroup = []string
 
 // BiosRequired maps a system name to its required BIOS groups. Paths are
-// relative to bios/.
+// relative to bios/. Every hash in BiosMD5 that covers a file named here
+// (and every hash below it) has been cross-checked against the
+// independently-maintained RetroDECK BIOS pack's own per-file manifest
+// (community-sourced MD5/SHA1/size data, not guessed or hand-typed) - see
+// BiosMD5's doc comment.
 var BiosRequired = map[string][]BiosGroup{
 	"psx":        {{"scph5501.bin", "scph5500.bin", "scph5502.bin"}},
 	"ps2":        {{"ps2-*.bin"}},
@@ -90,7 +94,40 @@ var BiosRequired = map[string][]BiosGroup{
 	"ps3":        {{"rpcs3/dev_flash/vsh/module"}},
 }
 
-// BiosMD5 holds reference MD5s for BIOS files with a single canonical dump.
+// BiosOptional maps a system name to BIOS/firmware groups (same shape as
+// BiosRequired - a group is one or more alternatives, any one satisfies
+// it) that improve accuracy, compatibility or boot-logo behavior but
+// aren't required for the system to run games at all - unlike
+// BiosRequired, missing one of these is never a FAIL or WARN, only INFO
+// (see commands.checkBios), regardless of whether the system has games.
+var BiosOptional = map[string][]BiosGroup{
+	"nds":        {{"bios7.bin"}, {"bios9.bin"}, {"firmware.bin"}},
+	"gb":         {{"gb_bios.bin"}},
+	"gbc":        {{"gbc_bios.bin"}},
+	"gba":        {{"gba_bios.bin"}},
+	"sgb":        {{"sgb_bios.bin"}},
+	"pcenginecd": {{"syscard1.pce"}, {"syscard2.pce"}, {"gexpress.pce"}},
+	"tg-cd":      {{"syscard1.pce"}, {"syscard2.pce"}, {"gexpress.pce"}},
+	"atari7800":  {{"7800 BIOS (U).rom"}},
+	// Dolphin's IPL.bin is per-region (one covers all games of that
+	// region); HLE works fine without it for the vast majority of
+	// GameCube/Wii games, so any one - or none - is fine.
+	"gc": {{"GC/USA/IPL.bin", "GC/EUR/IPL.bin", "GC/JAP/IPL.bin"}},
+}
+
+// BiosMD5 holds reference MD5s for BIOS files with a single canonical
+// dump - every entry here has been cross-checked against the
+// independently-maintained RetroDECK BIOS pack's own per-file manifest
+// (its generator hashes and records every file it ships, rather than
+// this table being hand-typed from one source), confirming every
+// pre-existing value here and adding dc/naomi.zip, dc/awbios.zip and
+// Complex.bin, which that cross-check showed also have a single
+// canonical dump. Deliberately excluded even though the pack ships a
+// copy: xbox_hdd.qcow2 (an Xbox's virtual hard disk holds game saves on
+// a real one, so a "canonical" hash would false-positive on every
+// genuine save) and NDS firmware.bin (holds a real console's Wi-Fi MAC
+// address and user settings, likewise never actually fixed) - see
+// commands.checkBios, which size-checks firmware.bin instead.
 var BiosMD5 = map[string]string{
 	"scph5500.bin":      "8dd7d5296a650fac7319bce665a6a53c",
 	"scph5501.bin":      "490f666e1afb15b7362b406ed1cea246",
@@ -105,6 +142,8 @@ var BiosMD5 = map[string]string{
 	"syscard3.pce":      "38179df8f4ac870017db21ebcbf53114",
 	"gexpress.pce":      "6d2cb14fc3e1f65ceb135633d1694122",
 	"dc/dc_boot.bin":    "e10c53c2f8b90bab96ead2d368858623",
+	"dc/naomi.zip":      "526eda1e2a7920c92c88178789d71d84",
+	"dc/awbios.zip":     "85254fbe320ca82a768ec2c26bb08def",
 	"panafz10.bin":      "51f2f43ae2f3508a14d9f56597e2d3ce",
 	"lynxboot.img":      "fcd403db69f54290b51035d82f835e7b",
 	"5200.rom":          "281f20ea4320404ec820fb7ec0693b38",
@@ -117,6 +156,63 @@ var BiosMD5 = map[string]string{
 	"bios7.bin":         "df692a80a5b1bc90728bc3dfc76cd948",
 	"bios9.bin":         "a392174eb3e572fed6447e956bde4b25",
 	"mcpx_1.0.bin":      "d49c52a4102f6df7bcf8d0617ac475ed",
+	"Complex.bin":       "21445c6f28fca7285b0f167ea770d1e5",
+	"GC/USA/IPL.bin":    "b17148254a5799684c7d783206504926",
+	"GC/EUR/IPL.bin":    "db92574caab77a7ec99d4605fd6f2450",
+	"GC/JAP/IPL.bin":    "fc924a7c879b661abc37cec4f018fdf3",
+}
+
+// BiosSize holds an expected file size, in bytes, for a BIOS/firmware
+// file with no single canonical hash (a real console's copy legitimately
+// varies - see BiosMD5's doc comment) but a fixed, well-known size that's
+// still worth checking: catches a truncated or wrong-file placeholder.
+var BiosSize = map[string]int64{
+	"firmware.bin": 262144,
+}
+
+// BiosLabel gives one short, human phrase for a BiosRequired/BiosOptional
+// entry, keyed the same way Fixes/the bios inventory look it up: by
+// system for a BiosRequired group (several alternatives, one phrase), or
+// "system/filename" for a single BiosOptional file (several unrelated
+// optional files can share a system). Falls back to a generic phrase
+// (see commands' biosLabel) when an entry isn't listed here, so a future
+// addition to BiosRequired/BiosOptional never goes unlabeled.
+var BiosLabel = map[string]string{
+	"psx":                         "PS1 BIOS (any NTSC-U/NTSC-J/PAL dump)",
+	"ps2":                         "PS2 BIOS (console-specific; many valid revisions, no single hash)",
+	"saturn":                      "Saturn BIOS (US/EU v1.01a)",
+	"saturnjp":                    "Saturn BIOS (JP)",
+	"segacd":                      "Sega CD BIOS (US/EU/JP)",
+	"megacd":                      "Mega CD BIOS (EU/US/JP)",
+	"megacdjp":                    "Mega CD BIOS (JP)",
+	"pcenginecd":                  "PC Engine CD System Card 3.0",
+	"tg-cd":                       "TurboGrafx-CD System Card 3.0",
+	"dreamcast":                   "Dreamcast boot ROM",
+	"naomi":                       "Naomi BIOS",
+	"atomiswave":                  "Atomiswave BIOS",
+	"3do":                         "3DO BIOS (Panasonic FZ-10)",
+	"atarilynx":                   "Atari Lynx boot ROM",
+	"atari5200":                   "Atari 5200 BIOS",
+	"fds":                         "Famicom Disk System BIOS",
+	"xbox/mcpx_1.0.bin":           "Xbox MCPX boot ROM",
+	"xbox/Complex.bin":            "Xbox kernel (Complex.bin)",
+	"xbox/xbox_hdd.qcow2":         "Xbox virtual hard disk (created on first boot; holds saves, not firmware)",
+	"ps3":                         "PS3 system firmware (install via RPCS3 from PS3UPDAT.PUP, not one file)",
+	"nds/bios7.bin":               "DS ARM7 BIOS (melonDS has a free replacement)",
+	"nds/bios9.bin":               "DS ARM9 BIOS (melonDS has a free replacement)",
+	"nds/firmware.bin":            "DS firmware (per-console MAC address; size-checked, not hashed)",
+	"gb/gb_bios.bin":              "Game Boy boot ROM (boot logo only)",
+	"gbc/gbc_bios.bin":            "Game Boy Color boot ROM (boot logo only)",
+	"gba/gba_bios.bin":            "Game Boy Advance boot ROM (a few accuracy edge cases only)",
+	"sgb/sgb_bios.bin":            "Super Game Boy boot ROM",
+	"pcenginecd/syscard1.pce":     "PC Engine CD System Card 1.0 (superseded by 3.0; a few early titles only)",
+	"pcenginecd/syscard2.pce":     "PC Engine CD System Card 2.0 (superseded by 3.0; a few early titles only)",
+	"pcenginecd/gexpress.pce":     "PC Engine Games Express card (a handful of specific titles only)",
+	"tg-cd/syscard1.pce":          "TurboGrafx-CD System Card 1.0 (superseded by 3.0; a few early titles only)",
+	"tg-cd/syscard2.pce":          "TurboGrafx-CD System Card 2.0 (superseded by 3.0; a few early titles only)",
+	"tg-cd/gexpress.pce":          "TurboGrafx Express card (a handful of specific titles only)",
+	"atari7800/7800 BIOS (U).rom": "Atari 7800 BIOS (a handful of specific titles only)",
+	"gc/GC/USA/IPL.bin":           "GameCube/Wii IPL boot ROM (per-region; HLE works fine without it for almost every game)",
 }
 
 // ClassOf returns the known Class for a system, or "" if unknown.

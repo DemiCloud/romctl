@@ -22,7 +22,7 @@ var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.chd$`)
 // with a playlist, for every system given.
 func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 	start := time.Now()
-	log := cliutil.NewLogger("m3u")
+	log := cliutil.NewLogger("m3u", runner.Format)
 	var grouped, failed atomic.Int64
 	for _, sys := range systems {
 		sysDir := filepath.Join(lib.Roms, sys)
@@ -95,6 +95,12 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 			grouped.Add(1)
 		}
 	}
-	fmt.Printf("m3u: %d grouped, %d failed in %s\n", grouped.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("grouped", grouped.Load())
+		runner.SetCount("failed", failed.Load())
+		return nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sm3u: %d grouped, %d failed in %s%s\n", color, grouped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return nil
 }

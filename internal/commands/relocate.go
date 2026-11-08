@@ -30,7 +30,7 @@ import (
 // a conflict instead of guessed at.
 func Relocate(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("relocate")
+	log := cliutil.NewLogger("relocate", runner.Format)
 	var moved, failed atomic.Int64
 	var mu sync.Mutex
 	var conflicts []fileConflict
@@ -81,7 +81,14 @@ func Relocate(lib *library.Library, runner *actions.Runner, systems []string) (b
 		}
 	})
 
-	fmt.Printf("relocate: %d moved, %d conflicts, %d failed in %s\n", moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("moved", moved.Load())
+		runner.SetCount("conflicts", int64(len(conflicts)))
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%srelocate: %d moved, %d conflicts, %d failed in %s%s\n", color, moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second), reset)
 	printFileConflicts(os.Stdout, conflicts)
 	return failed.Load() == 0, nil
 }

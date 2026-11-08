@@ -39,7 +39,7 @@ var saveExtSubdir = map[string]string{
 // internal/discimage's PS3 path (see AGENTS.md).
 func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("saves")
+	log := cliutil.NewLogger("saves", runner.Format)
 	destRoot := lib.Root
 	if dest != "" {
 		destRoot = dest
@@ -91,7 +91,14 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 		}
 	})
 
-	fmt.Printf("saves: %d moved, %d conflicts, %d failed in %s\n", moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("moved", moved.Load())
+		runner.SetCount("conflicts", int64(len(conflicts)))
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%ssaves: %d moved, %d conflicts, %d failed in %s%s\n", color, moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second), reset)
 	printFileConflicts(os.Stdout, conflicts)
 	return failed.Load() == 0, nil
 }

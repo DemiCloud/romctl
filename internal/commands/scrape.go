@@ -61,7 +61,17 @@ func skyscraperArtworkPath() (string, error) {
 // personal account ([scrape] user) is needed.
 func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg config.Config) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("scrape")
+	log := cliutil.NewLogger("scrape", runner.Format)
+	if runner.Format.Structured() {
+		// Skyscraper's own stdout streams through live (see scrapeOne's
+		// doc comment) - there's no way to capture that as structured
+		// data without losing the per-game progress that's the whole
+		// point of letting it through unbuffered, so --format's
+		// structured encodings aren't supported here; fall back to Plain
+		// rather than silently emitting a doomed, mixed-content "JSON".
+		log.Errf("--format=%s isn't supported for scrape (Skyscraper's own output streams live); printing plain text instead", runner.Format)
+		runner.Format = cliutil.FormatPlain
+	}
 	if cfg.Scrape.User == "" {
 		return false, fmt.Errorf(`set [scrape] user = "ssid:sspassword" in the config file, or pass --scrape-user (see --help)`)
 	}
@@ -97,7 +107,8 @@ func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg 
 		scraped++
 	}
 
-	fmt.Printf("scrape: %d scraped, %d skipped, %d failed in %s\n", scraped, skipped, failed, time.Since(start).Round(time.Second))
+	color, reset := cliutil.StatusColor(runner.Format, failed > 0)
+	fmt.Printf("%sscrape: %d scraped, %d skipped, %d failed in %s%s\n", color, scraped, skipped, failed, time.Since(start).Round(time.Second), reset)
 	return failed == 0, nil
 }
 

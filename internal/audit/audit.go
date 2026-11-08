@@ -71,6 +71,7 @@ type Report struct {
 	mu                 sync.Mutex
 	w                  io.Writer
 	verbose            bool
+	format             cliutil.Format
 	rootHint           string
 	fails, warns, info int
 	byCategory         map[Category]*tally
@@ -80,18 +81,19 @@ type Report struct {
 }
 
 // New returns a Report that prints to w. verbose prints every finding as
-// it's added (Fixes/Checklist/Summary still print at the end either way).
-// rootHint, if non-empty (an explicitly-passed "-r PATH"), is spliced into
-// every suggested command so a copy-pasted fix still targets the right
-// library root.
-func New(w io.Writer, verbose bool, rootHint string) *Report {
-	return &Report{w: w, verbose: verbose, rootHint: rootHint, byCategory: make(map[Category]*tally)}
+// it's added (Fixes/Checklist/Summary still print at the end either way,
+// except under a structured format - see Encode). rootHint, if non-empty
+// (an explicitly-passed "-r PATH"), is spliced into every suggested
+// command so a copy-pasted fix still targets the right library root.
+func New(w io.Writer, verbose bool, format cliutil.Format, rootHint string) *Report {
+	return &Report{w: w, verbose: verbose, format: format, rootHint: rootHint, byCategory: make(map[Category]*tally)}
 }
 
-// Add records one finding, printing it immediately in verbose mode. fix,
-// if a known subcommand, is shown inline as "[<prog> [-r root] fix
-// system]" so the hint can be copy-pasted; anything else (including "") is
-// treated as no command, and Fixes() explains it instead.
+// Add records one finding, printing it immediately in verbose mode (with
+// the level colored by severity in Fancy format). fix, if a known
+// subcommand, is shown inline as "[<prog> [-r root] fix system]" so the
+// hint can be copy-pasted; anything else (including "") is treated as no
+// command, and Fixes() explains it instead.
 func (r *Report) Add(level Level, category Category, system, path, message, fix string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,14 +121,17 @@ func (r *Report) Add(level Level, category Category, system, path, message, fix 
 	}
 	r.findings = append(r.findings, finding{level, category, system, path, fix, message})
 
-	if !r.verbose {
+	if !r.verbose || r.format.Structured() {
 		return
 	}
+	colors := cliutil.ColorsFor(r.format)
+	levelColor := map[Level]string{Fail: colors.Red, Warn: colors.Yellow, Info: colors.Green}[level]
+	coloredLevel := fmt.Sprintf("%s%-4s%s", levelColor, level, colors.Reset)
 	if knownFixes[fix] {
-		fmt.Fprintf(r.w, "%-4s  %-12s %s: %s  [%s]\n", level, system, path, message, r.commandHint(fix, system))
+		fmt.Fprintf(r.w, "%s  %-12s %s: %s  [%s]\n", coloredLevel, system, path, message, r.commandHint(fix, system))
 		return
 	}
-	fmt.Fprintf(r.w, "%-4s  %-12s %s: %s\n", level, system, path, message)
+	fmt.Fprintf(r.w, "%s  %-12s %s: %s\n", coloredLevel, system, path, message)
 }
 
 // commandHint builds "<prog> [-r root] <fix> <system>" for a per-line hint.
@@ -164,10 +169,22 @@ func (r *Report) Failed() bool {
 	return r.fails > 0
 }
 
+// symbols returns the fail/warn/ok glyphs for format: unicode in Fancy,
+// plain ASCII words everywhere else (Plain has no unicode/color at all;
+// a structured format never reaches these - see Encode).
+func symbols(format cliutil.Format) (fail, warn, ok string) {
+	if format.Fancy() {
+		return "✗", "!", "✓"
+	}
+	return "FAIL", "WARN", "OK"
+}
+
 // Checklist prints one line per Category, independent of whether it found
 // anything, so a run that ends "Clean" still shows what was actually
 // checked rather than just the absence of findings.
-func (r *Report) Checklist(w io.Writer, colors cliutil.Colors) {
+func (r *Report) Checklist(w io.Writer) {
+	colors := cliutil.ColorsFor(r.format)
+	failSym, warnSym, okSym := symbols(r.format)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Checks:")
 	for _, cat := range categoryOrder {
@@ -186,11 +203,11 @@ func (r *Report) Checklist(w io.Writer, colors cliutil.Colors) {
 		}
 		switch {
 		case t.fail > 0:
-			fmt.Fprintf(w, "  %-34s %s✗ %d fail%s, %d warn\n", label, colors.Red, t.fail, colors.Reset, t.warn)
+			fmt.Fprintf(w, "  %-34s %s%s %d fail%s, %d warn\n", label, colors.Red, failSym, t.fail, colors.Reset, t.warn)
 		case t.warn > 0:
-			fmt.Fprintf(w, "  %-34s %s! %d warn%s\n", label, colors.Yellow, t.warn, colors.Reset)
+			fmt.Fprintf(w, "  %-34s %s%s %d warn%s\n", label, colors.Yellow, warnSym, t.warn, colors.Reset)
 		default:
-			fmt.Fprintf(w, "  %-34s %s✓ clean%s\n", label, colors.Green, colors.Reset)
+			fmt.Fprintf(w, "  %-34s %s%s clean%s\n", label, colors.Green, okSym, colors.Reset)
 		}
 	}
 }
@@ -287,17 +304,84 @@ func (r *Report) Fixes(w io.Writer) {
 	}
 }
 
-// Summary prints the colorized one-line tally, honoring NO_COLOR.
-func (r *Report) Summary(w io.Writer, colors cliutil.Colors) {
+// structuredFinding is one finding's shape in Encode's json/yaml/toml/csv
+// output. Fix is the bare subcommand name (e.g. "rename"), empty when the
+// finding has no command-backed fix - the same knownFixes test Add/Fixes
+// already use to tell a real fix from an explanatory message.
+type structuredFinding struct {
+	Level    string `json:"level" yaml:"level" toml:"level"`
+	Category string `json:"category" yaml:"category" toml:"category"`
+	System   string `json:"system" yaml:"system" toml:"system"`
+	Path     string `json:"path" yaml:"path" toml:"path"`
+	Message  string `json:"message" yaml:"message" toml:"message"`
+	Fix      string `json:"fix,omitempty" yaml:"fix,omitempty" toml:"fix,omitempty"`
+}
+
+// structuredSummary is Encode's summary tally shape.
+type structuredSummary struct {
+	Fail int `json:"fail" yaml:"fail" toml:"fail"`
+	Warn int `json:"warn" yaml:"warn" toml:"warn"`
+	Info int `json:"info" yaml:"info" toml:"info"`
+}
+
+// structuredReport is Encode's top-level json/yaml/toml shape.
+type structuredReport struct {
+	Findings []structuredFinding `json:"findings" yaml:"findings" toml:"findings"`
+	Summary  structuredSummary   `json:"summary" yaml:"summary" toml:"summary"`
+}
+
+// Encode writes every finding, plus the summary tally, as json/yaml/toml
+// or csv - for scripting against check's results instead of parsing its
+// text output. Unlike the text report, this has no Checklist equivalent
+// (which category ran isn't a "finding"); a category that found nothing
+// simply contributes no findings. CSV carries the findings table alone,
+// with no separate summary row - a consumer can get the same tally by
+// counting rows per level.
+func (r *Report) Encode(w io.Writer, format cliutil.Format) error {
+	r.mu.Lock()
+	findings := append([]finding(nil), r.findings...)
+	fails, warns, info := r.fails, r.warns, r.info
+	r.mu.Unlock()
+
+	if format == cliutil.FormatCSV {
+		header := []string{"level", "category", "system", "path", "message", "fix"}
+		rows := make([][]string, 0, len(findings))
+		for _, f := range findings {
+			fix := ""
+			if knownFixes[f.fx] {
+				fix = f.fx
+			}
+			rows = append(rows, []string{string(f.level), string(f.category), f.system, f.path, f.message, fix})
+		}
+		return cliutil.EncodeCSV(w, header, rows)
+	}
+
+	out := structuredReport{Findings: make([]structuredFinding, 0, len(findings))}
+	for _, f := range findings {
+		sf := structuredFinding{Level: string(f.level), Category: string(f.category), System: f.system, Path: f.path, Message: f.message}
+		if knownFixes[f.fx] {
+			sf.Fix = f.fx
+		}
+		out.Findings = append(out.Findings, sf)
+	}
+	out.Summary = structuredSummary{Fail: fails, Warn: warns, Info: info}
+	return cliutil.Encode(w, format, out)
+}
+
+// Summary prints the one-line tally, colorized (and with unicode symbols)
+// in Fancy format, honoring NO_COLOR.
+func (r *Report) Summary(w io.Writer) {
+	colors := cliutil.ColorsFor(r.format)
+	failSym, warnSym, okSym := symbols(r.format)
 	fmt.Fprintln(w)
 	switch {
 	case r.fails > 0:
-		fmt.Fprintf(w, "%s✗ %d fail%s, %d warn, %d info\n", colors.Red, r.fails, colors.Reset, r.warns, r.info)
+		fmt.Fprintf(w, "%s%s %d fail%s, %d warn, %d info\n", colors.Red, failSym, r.fails, colors.Reset, r.warns, r.info)
 	case r.warns > 0:
-		fmt.Fprintf(w, "%s! %d warn%s, %d info\n", colors.Yellow, r.warns, colors.Reset, r.info)
+		fmt.Fprintf(w, "%s%s %d warn%s, %d info\n", colors.Yellow, warnSym, r.warns, colors.Reset, r.info)
 	case r.info > 0:
-		fmt.Fprintf(w, "%s✓ Clean%s (%d info)\n", colors.Green, colors.Reset, r.info)
+		fmt.Fprintf(w, "%s%s Clean%s (%d info)\n", colors.Green, okSym, colors.Reset, r.info)
 	default:
-		fmt.Fprintf(w, "%s✓ Clean%s\n", colors.Green, colors.Reset)
+		fmt.Fprintf(w, "%s%s Clean%s\n", colors.Green, okSym, colors.Reset)
 	}
 }

@@ -20,7 +20,7 @@ import (
 // emulator-resolved set names). See internal/actions.ApplyScheme.
 func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
 	start := time.Now()
-	log := cliutil.NewLogger("rename")
+	log := cliutil.NewLogger("rename", runner.Format)
 	var renamed, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
@@ -66,7 +66,13 @@ func Rename(lib *library.Library, runner *actions.Runner, systems []string, sche
 			renamed.Add(1)
 		}
 	})
-	fmt.Printf("rename: %d renamed, %d failed in %s\n", renamed.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("renamed", renamed.Load())
+		runner.SetCount("failed", failed.Load())
+		return nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%srename: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return nil
 }
 

@@ -22,7 +22,7 @@ import (
 // resulting ISO's name; see internal/actions.ApplyScheme.
 func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("ps3")
+	log := cliutil.NewLogger("ps3", runner.Format)
 	var unpacked, built, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		spec, ok := discimage.SpecFor(systemdb.ClassOf(sys))
@@ -41,6 +41,13 @@ func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 			failed.Add(1)
 		}
 	})
-	fmt.Printf("ps3: %d unpacked, %d built, %d failed in %s\n", unpacked.Load(), built.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("unpacked", unpacked.Load())
+		runner.SetCount("built", built.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%sps3: %d unpacked, %d built, %d failed in %s%s\n", color, unpacked.Load(), built.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }

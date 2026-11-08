@@ -55,7 +55,7 @@ func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, sc
 // the overall result failed and move on to the next step.
 func Fix(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, savesDest string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("fix")
+	log := cliutil.NewLogger("fix", runner.Format)
 	ok := true
 	for _, step := range fixSteps(lib, runner, systems, scheme, savesDest) {
 		stepOK, err := step.run()
@@ -68,6 +68,13 @@ func Fix(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 			ok = false
 		}
 	}
-	fmt.Printf("fix: done in %s\n", time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		// Every step above already reported its own counts to this same
+		// shared runner (see actions.Result's doc comment on same-named
+		// keys merging across steps); nothing left to add here.
+		return ok, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, !ok)
+	fmt.Printf("%sfix: done in %s%s\n", color, time.Since(start).Round(time.Second), reset)
 	return ok, nil
 }

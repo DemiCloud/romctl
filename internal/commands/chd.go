@@ -52,7 +52,7 @@ type chdJob struct {
 // job's unique source file or a freshly made temp directory.
 func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("chd")
+	log := cliutil.NewLogger("chd", runner.Format)
 	var converted, skipped, failed atomic.Int64
 
 	var jobs []chdJob
@@ -72,99 +72,109 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j chdJob) {
-		sys, class, base, i, total := j.sys, j.class, j.base, j.idx, j.total
-		if strings.HasPrefix(base, "_") || strings.HasSuffix(base, ".m3u") || base == "systeminfo.txt" {
-			return
-		}
-		sysDir := filepath.Join(lib.Roms, sys)
-		path := filepath.Join(sysDir, base)
-		title := actions.ApplyScheme(strings.TrimSuffix(base, filepath.Ext(base)), scheme)
-		info, err := os.Stat(path)
-		if err != nil {
-			return
-		}
-
-		if info.IsDir() {
-			title = actions.ApplyScheme(base, scheme)
-			if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "chd", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j chdJob) {
+			defer tick()
+			sys, class, base, i, total := j.sys, j.class, j.base, j.idx, j.total
+			if strings.HasPrefix(base, "_") || strings.HasSuffix(base, ".m3u") || base == "systeminfo.txt" {
 				return
 			}
-			newName, err := convertGameDir(class, sysDir, path, title)
+			sysDir := filepath.Join(lib.Roms, sys)
+			path := filepath.Join(sysDir, base)
+			title := actions.ApplyScheme(strings.TrimSuffix(base, filepath.Ext(base)), scheme)
+			info, err := os.Stat(path)
 			if err != nil {
-				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-				failed.Add(1)
 				return
 			}
-			if err := actions.Retire(path); err != nil {
-				log.Errf("retire failed: %s: %v", path, err)
-			}
-			if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			converted.Add(1)
-			return
-		}
 
-		ext := strings.ToLower(filepath.Ext(base))
-		dest := filepath.Join(sysDir, title+".chd")
-		switch ext {
-		case ".cso":
-			if exists(dest) {
-				skipped.Add(1)
+			if info.IsDir() {
+				title = actions.ApplyScheme(base, scheme)
+				if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
+					return
+				}
+				newName, err := convertGameDir(class, sysDir, path, title)
+				if err != nil {
+					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+					failed.Add(1)
+					return
+				}
+				if err := actions.Retire(path); err != nil {
+					log.Errf("retire failed: %s: %v", path, err)
+				}
+				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
+					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+				}
+				converted.Add(1)
 				return
 			}
-			if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
-				return
+
+			ext := strings.ToLower(filepath.Ext(base))
+			dest := filepath.Join(sysDir, title+".chd")
+			switch ext {
+			case ".cso":
+				if exists(dest) {
+					skipped.Add(1)
+					return
+				}
+				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
+					return
+				}
+				if err := csoToCHD(path, dest); err != nil {
+					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+					failed.Add(1)
+					return
+				}
+				_ = actions.Retire(path)
+				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
+					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+				}
+				converted.Add(1)
+			case ".cue", ".gdi", ".iso":
+				if exists(dest) {
+					skipped.Add(1)
+					return
+				}
+				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
+					return
+				}
+				mode := chdMode(class, path)
+				if err := makeCHD(mode, path, dest); err != nil {
+					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+					failed.Add(1)
+					return
+				}
+				_ = actions.Retire(path)
+				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
+					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+				}
+				converted.Add(1)
+			case ".zip", ".7z", ".rar":
+				if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
+					return
+				}
+				newName, err := extractAndConvert(class, sysDir, path, title)
+				if err != nil {
+					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+					failed.Add(1)
+					return
+				}
+				_ = actions.Retire(path)
+				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
+					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+				}
+				converted.Add(1)
 			}
-			if err := csoToCHD(path, dest); err != nil {
-				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-				failed.Add(1)
-				return
-			}
-			_ = actions.Retire(path)
-			if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			converted.Add(1)
-		case ".cue", ".gdi", ".iso":
-			if exists(dest) {
-				skipped.Add(1)
-				return
-			}
-			if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
-				return
-			}
-			mode := chdMode(class, path)
-			if err := makeCHD(mode, path, dest); err != nil {
-				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-				failed.Add(1)
-				return
-			}
-			_ = actions.Retire(path)
-			if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			converted.Add(1)
-		case ".zip", ".7z", ".rar":
-			if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
-				return
-			}
-			newName, err := extractAndConvert(class, sysDir, path, title)
-			if err != nil {
-				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-				failed.Add(1)
-				return
-			}
-			_ = actions.Retire(path)
-			if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			converted.Add(1)
-		}
+		})
 	})
 
-	fmt.Printf("chd: %d converted, %d skipped, %d failed in %s\n", converted.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("converted", converted.Load())
+		runner.SetCount("skipped", skipped.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%schd: %d converted, %d skipped, %d failed in %s%s\n", color, converted.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }
 

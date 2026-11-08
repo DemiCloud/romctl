@@ -29,7 +29,7 @@ type rvzJob struct {
 // RVZ converts GameCube/Wii images to Dolphin's native RVZ format.
 func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("rvz")
+	log := cliutil.NewLogger("rvz", runner.Format)
 	var converted, failed atomic.Int64
 
 	var jobs []rvzJob
@@ -54,28 +54,37 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		}
 	}
 
-	cliutil.Parallel(jobs, func(j rvzJob) {
-		path := filepath.Join(lib.Roms, j.sys, j.base)
-		out := strings.TrimSuffix(path, filepath.Ext(path)) + ".rvz"
-		if exists(out) {
-			return
-		}
-		if !runner.Act("[%d/%d] convert %s/%s -> %s", j.idx+1, j.total, j.sys, j.base, filepath.Base(out)) {
-			return
-		}
-		if err := convertToRVZ(path, out); err != nil {
-			log.Errf("failed, source kept: %s: %v", path, err)
-			failed.Add(1)
-			return
-		}
-		_ = actions.Retire(path)
-		if err := gamelist.Rename(lib.Root, j.sys, j.base, filepath.Base(out)); err != nil {
-			log.Errf("gamelist update failed: %s/%s: %v", j.sys, j.base, err)
-		}
-		converted.Add(1)
+	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "rvz", len(jobs), func(tick func()) {
+		cliutil.Parallel(jobs, func(j rvzJob) {
+			defer tick()
+			path := filepath.Join(lib.Roms, j.sys, j.base)
+			out := strings.TrimSuffix(path, filepath.Ext(path)) + ".rvz"
+			if exists(out) {
+				return
+			}
+			if !runner.Act("[%d/%d] convert %s/%s -> %s", j.idx+1, j.total, j.sys, j.base, filepath.Base(out)) {
+				return
+			}
+			if err := convertToRVZ(path, out); err != nil {
+				log.Errf("failed, source kept: %s: %v", path, err)
+				failed.Add(1)
+				return
+			}
+			_ = actions.Retire(path)
+			if err := gamelist.Rename(lib.Root, j.sys, j.base, filepath.Base(out)); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", j.sys, j.base, err)
+			}
+			converted.Add(1)
+		})
 	})
 
-	fmt.Printf("rvz: %d converted, %d failed in %s\n", converted.Load(), failed.Load(), time.Since(start).Round(time.Second))
+	if runner.Format.Structured() {
+		runner.SetCount("converted", converted.Load())
+		runner.SetCount("failed", failed.Load())
+		return failed.Load() == 0, nil
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
+	fmt.Printf("%srvz: %d converted, %d failed in %s%s\n", color, converted.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	return failed.Load() == 0, nil
 }
 

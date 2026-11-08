@@ -12,12 +12,14 @@ import (
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
 // RunPhase runs fn, animating a spinner labeled label on stderr while it
-// runs. Skipped - fn just runs directly - when verbose (fn prints its own
-// output instead, which would collide with the spinner) or stderr isn't a
-// terminal (no point animating output nobody sees live, and it would
-// otherwise write control characters into a piped/redirected stream).
-func RunPhase(verbose bool, label string, fn func()) {
-	if verbose || !term.IsTerminal(int(os.Stderr.Fd())) {
+// runs. Skipped - fn just runs directly - outside Fancy format (Plain and
+// every structured format print no decoration at all), when verbose (fn
+// prints its own output instead, which would collide with the spinner),
+// or when stderr isn't a terminal (no point animating output nobody sees
+// live, and it would otherwise write control characters into a
+// piped/redirected stream).
+func RunPhase(format Format, verbose bool, label string, fn func()) {
+	if !format.Fancy() || verbose || !term.IsTerminal(int(os.Stderr.Fd())) {
 		fn()
 		return
 	}
