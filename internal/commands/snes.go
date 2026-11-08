@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -15,70 +16,85 @@ import (
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
+// snesJob is one ROM to examine/normalize, flattened out of its system's
+// directory listing up front - see CHD's doc comment for why every
+// system's files run through one shared worker pool instead of one per
+// system.
+type snesJob struct {
+	sys, base string
+}
+
 // SNES strips 512-byte copier headers and renames .smc to .sfc.
 func SNES(lib *library.Library, runner *actions.Runner, systems []string) error {
+	start := time.Now()
 	log := cliutil.NewLogger("snes")
 	var processed, failed atomic.Int64
-	cliutil.Parallel(systems, func(sys string) {
+
+	var jobs []snesJob
+	for _, sys := range systems {
 		if systemdb.ClassOf(sys) != systemdb.ClassSNES {
-			return
+			continue
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			return
+			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
-			base := e.Name()
-			ext := strings.ToLower(filepath.Ext(base))
+			ext := strings.ToLower(filepath.Ext(e.Name()))
 			if ext != ".smc" && ext != ".sfc" {
 				continue
 			}
-			src := filepath.Join(sysDir, base)
-			out := strings.TrimSuffix(src, filepath.Ext(src)) + ".sfc"
-			outBase := filepath.Base(out)
+			jobs = append(jobs, snesJob{sys, e.Name()})
+		}
+	}
 
-			info, err := os.Stat(src)
-			if err != nil {
-				continue
+	cliutil.Parallel(jobs, func(j snesJob) {
+		sys, base := j.sys, j.base
+		src := filepath.Join(lib.Roms, sys, base)
+		out := strings.TrimSuffix(src, filepath.Ext(src)) + ".sfc"
+		outBase := filepath.Base(out)
+
+		info, err := os.Stat(src)
+		if err != nil {
+			return
+		}
+		switch {
+		case snes.HasHeader(info.Size()):
+			if !runner.Act("strip header %s/%s -> %s", sys, base, outBase) {
+				return
 			}
-			switch {
-			case snes.HasHeader(info.Size()):
-				if !runner.Act("strip header %s/%s -> %s", sys, base, outBase) {
-					continue
-				}
-				if err := stripSNESHeader(src, out); err != nil {
-					log.Errf("strip header failed: %s/%s: %v", sys, base, err)
+			if err := stripSNESHeader(src, out); err != nil {
+				log.Errf("strip header failed: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
+			}
+			if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			processed.Add(1)
+		case src != out:
+			if exists(out) {
+				log.Errf("exists, skipped: %s", out)
+				return
+			}
+			if runner.Act("rename %s/%s -> %s", sys, base, outBase) {
+				if err := os.Rename(src, out); err != nil {
+					log.Errf("rename failed: %s/%s: %v", sys, base, err)
 					failed.Add(1)
-					continue
+					return
 				}
 				if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 				}
 				processed.Add(1)
-			case src != out:
-				if exists(out) {
-					log.Errf("exists, skipped: %s", out)
-					continue
-				}
-				if runner.Act("rename %s/%s -> %s", sys, base, outBase) {
-					if err := os.Rename(src, out); err != nil {
-						log.Errf("rename failed: %s/%s: %v", sys, base, err)
-						failed.Add(1)
-						continue
-					}
-					if err := gamelist.Rename(lib.Root, sys, base, outBase); err != nil {
-						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-					}
-					processed.Add(1)
-				}
 			}
 		}
 	})
-	fmt.Printf("snes: %d processed, %d failed\n", processed.Load(), failed.Load())
+	fmt.Printf("snes: %d processed, %d failed in %s\n", processed.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return nil
 }
 

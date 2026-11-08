@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/archive"
@@ -15,22 +16,33 @@ import (
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
+// unpackJob is one archive to examine/unpack, flattened out of its
+// system's directory listing up front - see CHD's doc comment for why
+// every system's files run through one shared worker pool instead of one
+// per system.
+type unpackJob struct {
+	sys, base string
+}
+
 // Unpack extracts single-file archives in cartridge/N64/SNES systems;
 // multi-file archives are left alone (there's no single "the game" file
 // to promote).
 func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("unpack")
 	var unpacked, skipped, failed atomic.Int64
-	cliutil.Parallel(systems, func(sys string) {
+
+	var jobs []unpackJob
+	for _, sys := range systems {
 		switch systemdb.ClassOf(sys) {
 		case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES:
 		default:
-			return
+			continue
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			return
+			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -40,45 +52,51 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 			if ext != ".zip" && ext != ".7z" && ext != ".rar" {
 				continue
 			}
-			archivePath := filepath.Join(sysDir, e.Name())
-
-			// Listing the sole entry's name doesn't require extracting
-			// anything, so an already-unpacked archive (very common on a
-			// re-run) can be skipped before paying for a full extraction -
-			// and, just as importantly, counted separately from a real
-			// failure instead of inflating it.
-			innerName, single, err := archive.SoleEntry(archivePath)
-			if err != nil {
-				log.Errf("unreadable archive: %s", archivePath)
-				failed.Add(1)
-				continue
-			}
-			if !single {
-				log.Errf("multi-file archive, skipped: %s/%s", sys, e.Name())
-				continue
-			}
-			innerExt := strings.ToLower(filepath.Ext(innerName))
-			base := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-			out := filepath.Join(sysDir, base+innerExt)
-			if exists(out) {
-				skipped.Add(1)
-				continue
-			}
-			if !runner.Act("unpack %s/%s", sys, e.Name()) {
-				continue
-			}
-			if err := unpackOne(sysDir, archivePath, out); err != nil {
-				log.Errf("%v", err)
-				failed.Add(1)
-				continue
-			}
-			if err := gamelist.Rename(lib.Root, sys, e.Name(), filepath.Base(out)); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, e.Name(), err)
-			}
-			unpacked.Add(1)
+			jobs = append(jobs, unpackJob{sys, e.Name()})
 		}
+	}
+
+	cliutil.Parallel(jobs, func(j unpackJob) {
+		sys, base := j.sys, j.base
+		sysDir := filepath.Join(lib.Roms, sys)
+		archivePath := filepath.Join(sysDir, base)
+
+		// Listing the sole entry's name doesn't require extracting
+		// anything, so an already-unpacked archive (very common on a
+		// re-run) can be skipped before paying for a full extraction -
+		// and, just as importantly, counted separately from a real
+		// failure instead of inflating it.
+		innerName, single, err := archive.SoleEntry(archivePath)
+		if err != nil {
+			log.Errf("unreadable archive: %s", archivePath)
+			failed.Add(1)
+			return
+		}
+		if !single {
+			log.Errf("multi-file archive, skipped: %s/%s", sys, base)
+			return
+		}
+		innerExt := strings.ToLower(filepath.Ext(innerName))
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		out := filepath.Join(sysDir, stem+innerExt)
+		if exists(out) {
+			skipped.Add(1)
+			return
+		}
+		if !runner.Act("unpack %s/%s", sys, base) {
+			return
+		}
+		if err := unpackOne(sysDir, archivePath, out); err != nil {
+			log.Errf("%v", err)
+			failed.Add(1)
+			return
+		}
+		if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+			log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+		}
+		unpacked.Add(1)
 	})
-	fmt.Printf("unpack: %d unpacked, %d skipped, %d failed\n", unpacked.Load(), skipped.Load(), failed.Load())
+	fmt.Printf("unpack: %d unpacked, %d skipped, %d failed in %s\n", unpacked.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return failed.Load() == 0, nil
 }
 

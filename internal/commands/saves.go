@@ -54,6 +54,7 @@ type saveConflict struct {
 // file was never itself a scraped entry, the same reasoning that exempts
 // internal/discimage's PS3 path (see AGENTS.md).
 func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest string) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("saves")
 	destRoot := lib.Root
 	if dest != "" {
@@ -106,7 +107,7 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 		}
 	})
 
-	fmt.Printf("saves: %d moved, %d conflicts, %d failed\n", moved.Load(), len(conflicts), failed.Load())
+	fmt.Printf("saves: %d moved, %d conflicts, %d failed in %s\n", moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second))
 	printSaveConflicts(os.Stdout, conflicts)
 	return failed.Load() == 0, nil
 }

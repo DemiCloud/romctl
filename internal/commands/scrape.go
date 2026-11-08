@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -59,6 +60,7 @@ func skyscraperArtworkPath() (string, error) {
 // ScreenScraper developer credentials are baked in, so only the user's
 // personal account ([scrape] user) is needed.
 func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg config.Config) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("scrape")
 	if cfg.Scrape.User == "" {
 		return false, fmt.Errorf(`set [scrape] user = "ssid:sspassword" in the config file, or pass --scrape-user (see --help)`)
@@ -72,7 +74,8 @@ func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg 
 		return false, fmt.Errorf("writing skyscraper artwork.xml: %w", err)
 	}
 	scraped, skipped, failed := 0, 0, 0
-	for _, sys := range systems {
+	total := len(systems)
+	for i, sys := range systems {
 		platform, ok := systemdb.SkyscraperPlatform[sys]
 		if !ok {
 			log.Errf("no Skyscraper platform for %s, skipped", sys)
@@ -83,7 +86,7 @@ func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg 
 		if !library.HasGames(sysDir) {
 			continue
 		}
-		if !runner.Act("scrape %s (platform %s)", sys, platform) {
+		if !runner.Act("[%d/%d] scrape %s (platform %s)", i+1, total, sys, platform) {
 			continue
 		}
 		if err := scrapeOne(path, artwork, lib.Root, sys, sysDir, platform, cfg.Scrape.User, cfg.Scrape.Threads); err != nil {
@@ -94,7 +97,7 @@ func Scrape(lib *library.Library, runner *actions.Runner, systems []string, cfg 
 		scraped++
 	}
 
-	fmt.Printf("scrape: %d scraped, %d skipped, %d failed\n", scraped, skipped, failed)
+	fmt.Printf("scrape: %d scraped, %d skipped, %d failed in %s\n", scraped, skipped, failed, time.Since(start).Round(time.Second))
 	return failed == 0, nil
 }
 
@@ -140,9 +143,17 @@ func scrapeOne(skyscraper, artwork, libRoot, sys, sysDir, platform, user string,
 		}
 	}
 
+	// Skyscraper's own stdout/stderr stream through live (see
+	// executil.RunInherit's doc comment) rather than being captured and
+	// reformatted - its per-game progress and thread status during a
+	// multi-hour run are worth more than a quieter but blind romctl
+	// summary. These headers just bracket that output so it's clear which
+	// system and phase it belongs to.
+	fmt.Printf("scrape: %s: fetching metadata from ScreenScraper...\n", sys)
 	if err := scrapePass(skyscraper, artwork, sysDir, platform, user, threads, "nosubdirs", nil); err != nil {
 		return fmt.Errorf("flat files: %w", err)
 	}
+	fmt.Printf("scrape: %s: writing gamelist and media...\n", sys)
 	if err := generatePass(skyscraper, artwork, sysDir, gamelistDir, mediaDir, platform, "nosubdirs", nil); err != nil {
 		return fmt.Errorf("flat files: %w", err)
 	}
@@ -155,9 +166,11 @@ func scrapeOne(skyscraper, artwork, libRoot, sys, sysDir, platform, user string,
 	for i, title := range m3uTitles {
 		playlists[i] = filepath.Join(sysDir, title+".m3u", title+".m3u")
 	}
+	fmt.Printf("scrape: %s: fetching metadata for %d multi-disc game(s)...\n", sys, len(m3uTitles))
 	if err := scrapePass(skyscraper, artwork, sysDir, platform, user, threads, "", playlists); err != nil {
 		return fmt.Errorf("multi-disc: %w", err)
 	}
+	fmt.Printf("scrape: %s: writing multi-disc gamelist and media...\n", sys)
 	if err := generatePass(skyscraper, artwork, sysDir, gamelistDir, mediaDir, platform, "", playlists); err != nil {
 		return fmt.Errorf("multi-disc: %w", err)
 	}

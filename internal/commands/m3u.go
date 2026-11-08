@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -20,6 +21,7 @@ var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.chd$`)
 // M3U groups loose "Title (Disc N).chd" files into a Title.m3u/ directory
 // with a playlist, for every system given.
 func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
+	start := time.Now()
 	log := cliutil.NewLogger("m3u")
 	var grouped, failed atomic.Int64
 	for _, sys := range systems {
@@ -93,6 +95,6 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 			grouped.Add(1)
 		}
 	}
-	fmt.Printf("m3u: %d grouped, %d failed\n", grouped.Load(), failed.Load())
+	fmt.Printf("m3u: %d grouped, %d failed in %s\n", grouped.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return nil
 }

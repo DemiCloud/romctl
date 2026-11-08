@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -17,6 +18,14 @@ import (
 	"github.com/demicloud/romctl/internal/tools"
 )
 
+// xisoJob is one .iso to examine/convert, flattened out of its system's
+// directory listing up front - see CHD's doc comment for why every
+// system's files run through one shared worker pool instead of one per
+// system.
+type xisoJob struct {
+	sys, base string
+}
+
 // Xiso converts Xbox disc images to XISO. A file that's already a valid
 // XISO (just misnamed .iso) is renamed directly; a full/redump dump (which
 // has a video partition ahead of the actual XDVDFS game data, at one of
@@ -24,65 +33,71 @@ import (
 // embedded/PATH extract-xiso -r, which finds the real game partition and
 // rewrites it as a trimmed, valid XISO.
 func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("xiso")
 	var converted, renamed, failed atomic.Int64
 
-	cliutil.Parallel(systems, func(sys string) {
+	var jobs []xisoJob
+	for _, sys := range systems {
 		if systemdb.ClassOf(sys) != systemdb.ClassXbox {
-			return
+			continue
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			return
+			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".iso" {
 				continue
 			}
-			base := e.Name()
-			src := filepath.Join(sysDir, base)
-			out := strings.TrimSuffix(src, filepath.Ext(src)) + ".xiso"
-			if exists(out) {
-				continue
-			}
-
-			ok, err := xiso.IsXISO(src)
-			if err != nil {
-				continue
-			}
-
-			if ok {
-				if runner.Act("rename %s/%s -> %s", sys, base, filepath.Base(out)) {
-					if err := os.Rename(src, out); err != nil {
-						log.Errf("rename failed: %s: %v", src, err)
-						failed.Add(1)
-						continue
-					}
-					if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
-						log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-					}
-					renamed.Add(1)
-				}
-				continue
-			}
-
-			if !runner.Act("convert %s/%s -> %s", sys, base, filepath.Base(out)) {
-				continue
-			}
-			if err := convertToXISO(src, out); err != nil {
-				log.Errf("not an XISO, skipped: %s: %v", src, err)
-				failed.Add(1)
-				continue
-			}
-			if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
-				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-			}
-			converted.Add(1)
+			jobs = append(jobs, xisoJob{sys, e.Name()})
 		}
+	}
+
+	cliutil.Parallel(jobs, func(j xisoJob) {
+		sys, base := j.sys, j.base
+		src := filepath.Join(lib.Roms, sys, base)
+		out := strings.TrimSuffix(src, filepath.Ext(src)) + ".xiso"
+		if exists(out) {
+			return
+		}
+
+		ok, err := xiso.IsXISO(src)
+		if err != nil {
+			return
+		}
+
+		if ok {
+			if runner.Act("rename %s/%s -> %s", sys, base, filepath.Base(out)) {
+				if err := os.Rename(src, out); err != nil {
+					log.Errf("rename failed: %s: %v", src, err)
+					failed.Add(1)
+					return
+				}
+				if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+				}
+				renamed.Add(1)
+			}
+			return
+		}
+
+		if !runner.Act("convert %s/%s -> %s", sys, base, filepath.Base(out)) {
+			return
+		}
+		if err := convertToXISO(src, out); err != nil {
+			log.Errf("not an XISO, skipped: %s: %v", src, err)
+			failed.Add(1)
+			return
+		}
+		if err := gamelist.Rename(lib.Root, sys, base, filepath.Base(out)); err != nil {
+			log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+		}
+		converted.Add(1)
 	})
 
-	fmt.Printf("xiso: %d converted, %d renamed, %d failed\n", converted.Load(), renamed.Load(), failed.Load())
+	fmt.Printf("xiso: %d converted, %d renamed, %d failed in %s\n", converted.Load(), renamed.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return failed.Load() == 0, nil
 }
 

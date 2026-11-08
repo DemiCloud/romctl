@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -20,6 +21,7 @@ import (
 // (`[naming] scheme`) controls how region/dump tags end up in the
 // resulting ISO's name; see internal/actions.ApplyScheme.
 func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("ps3")
 	var unpacked, built, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
@@ -39,6 +41,6 @@ func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 			failed.Add(1)
 		}
 	})
-	fmt.Printf("ps3: %d unpacked, %d built, %d failed\n", unpacked.Load(), built.Load(), failed.Load())
+	fmt.Printf("ps3: %d unpacked, %d built, %d failed in %s\n", unpacked.Load(), built.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return failed.Load() == 0, nil
 }

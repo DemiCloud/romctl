@@ -23,7 +23,7 @@ import (
 var mutatingCommands = map[string]bool{
 	"rename": true, "unpack": true, "chd": true, "m3u": true, "dvd": true,
 	"n64": true, "snes": true, "xiso": true, "rvz": true, "ps3": true, "clean": true,
-	"scrape": true, "saves": true,
+	"scrape": true, "saves": true, "fix": true,
 }
 
 var readOnlyCommands = map[string]bool{
@@ -172,6 +172,9 @@ func run(args []string) int {
 		if n := actions.RetiredCount(); n > 0 {
 			fmt.Printf("%d item(s) pending in _to_delete/; run `%s clean` to remove\n", n, cliutil.ProgName())
 		}
+		if cfg.Sync.Host != "" {
+			fmt.Printf("don't forget `%s sync` to push these changes to the device\n", cliutil.ProgName())
+		}
 	}
 	return 0
 }
@@ -211,6 +214,8 @@ func dispatch(cmd string, lib *library.Library, runner *actions.Runner, systems 
 		return commands.Bios(lib, systems)
 	case "list":
 		return true, commands.List(lib, systems, showGames)
+	case "fix":
+		return commands.Fix(lib, runner, systems, scheme, savesDest)
 	case "rename":
 		return true, commands.Rename(lib, runner, systems, scheme)
 	case "unpack":
@@ -280,7 +285,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "list", "rename", "unpack", "chd", "m3u", "dvd", "n64",
+	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "dvd", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "scrape", "clean", "sync", "systems",
 }
 
@@ -288,6 +293,7 @@ var commandTable = map[string]cmdInfo{
 	"check":   {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagDupes, flagVerbose, flagScheme}},
 	"bios":    {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot}},
 	"list":    {"list populated systems and game counts (-g for titles)", "[SYSTEM...|all]", []string{flagRoot, flagGames}},
+	"fix":     {"run every local fix step: unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest}},
 	"rename":  {"apply the configured naming scheme to loose files (see [naming])", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},
 	"unpack":  {"extract single-file archives in cartridge systems", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose}},
 	"chd":     {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme}},

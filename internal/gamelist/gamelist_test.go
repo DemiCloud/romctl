@@ -1,8 +1,11 @@
 package gamelist
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -114,5 +117,51 @@ func TestRenameWithoutESDEIsNoop(t *testing.T) {
 	root := t.TempDir()
 	if err := Rename(root, "snes", "Super Game (USA).smc", "Super Game.sfc"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRenameConcurrentSameSystem guards against the lost-update race
+// patchGamelist's read-modify-write would otherwise hit once conversion
+// commands started converting a system's files concurrently (see
+// renameLocks): every goroutine here targets a distinct <path> in the
+// same system's gamelist.xml, so without the per-(libRoot,sys) lock some
+// of these edits would be silently overwritten by a sibling goroutine's
+// write. Run with -race to also catch the underlying data race itself.
+func TestRenameConcurrentSameSystem(t *testing.T) {
+	root := t.TempDir()
+	const n = 50
+
+	var games strings.Builder
+	games.WriteString("<gameList>\n")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&games, "\t<game>\n\t\t<path>./Game %d (USA).smc</path>\n\t</game>\n", i)
+	}
+	games.WriteString("</gameList>\n")
+	gl := filepath.Join(root, "ES-DE", "gamelists", "snes", "gamelist.xml")
+	writeFile(t, gl, games.String())
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			old := fmt.Sprintf("Game %d (USA).smc", i)
+			renamed := fmt.Sprintf("Game %d.sfc", i)
+			if err := Rename(root, "snes", old, renamed); err != nil {
+				t.Errorf("rename %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	got, err := os.ReadFile(gl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		want := fmt.Sprintf("<path>./Game %d.sfc</path>", i)
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing edit for game %d (lost update): want %q in gamelist.xml", i, want)
+		}
 	}
 }

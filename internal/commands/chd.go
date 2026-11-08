@@ -2,11 +2,13 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/archive"
@@ -19,120 +21,149 @@ import (
 	"github.com/demicloud/romctl/internal/tools"
 )
 
+// chdJob is one file (or game directory) to convert, flattened out of its
+// system's directory listing up front so every system's files run through
+// one shared worker pool instead of one pool per system - see CHD's doc
+// comment on why that matters.
+type chdJob struct {
+	sys        string
+	class      systemdb.Class
+	base       string
+	idx, total int
+}
+
 // CHD converts game directories, archives and loose .cue/.gdi/.iso/.cso
 // files to CHD for every CD/DVD/UMD-class system given. Multi-disc games
 // become a Title.m3u/ directory. scheme (`[naming] scheme`) controls how
 // the source's region/dump tags end up in the resulting filename; see
 // internal/actions.ApplyScheme.
+//
+// Every chdman invocation is CPU-bound and independent per file, so all
+// matching files across every system are flattened into one job list and
+// run through a single GOMAXPROCS-sized worker pool (cliutil.Parallel),
+// rather than one pool per system - the latter would only ever use as many
+// concurrent workers as there are systems given, which is 1 whenever the
+// request is for a single large system (the common case: "romctl chd
+// psx"), wasting every other core. Running a system's files concurrently
+// is safe: gamelist.Rename serializes its own per-system gamelist.xml
+// read-modify-write internally, and actions.Retire/convertGameDir/
+// extractAndConvert each only ever touch paths derived from their own
+// job's unique source file or a freshly made temp directory.
 func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (bool, error) {
+	start := time.Now()
 	log := cliutil.NewLogger("chd")
 	var converted, skipped, failed atomic.Int64
 
-	cliutil.Parallel(systems, func(sys string) {
+	var jobs []chdJob
+	for _, sys := range systems {
 		class := systemdb.ClassOf(sys)
 		if class != systemdb.ClassCD && class != systemdb.ClassDVD && class != systemdb.ClassUMD {
-			return
+			continue
 		}
 		sysDir := filepath.Join(lib.Roms, sys)
 		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			return
+			continue
 		}
 		names := entryNames(entries)
-		total := len(names)
-
 		for i, base := range names {
-			if strings.HasPrefix(base, "_") || strings.HasSuffix(base, ".m3u") || base == "systeminfo.txt" {
-				continue
+			jobs = append(jobs, chdJob{sys, class, base, i, len(names)})
+		}
+	}
+
+	cliutil.Parallel(jobs, func(j chdJob) {
+		sys, class, base, i, total := j.sys, j.class, j.base, j.idx, j.total
+		if strings.HasPrefix(base, "_") || strings.HasSuffix(base, ".m3u") || base == "systeminfo.txt" {
+			return
+		}
+		sysDir := filepath.Join(lib.Roms, sys)
+		path := filepath.Join(sysDir, base)
+		title := actions.ApplyScheme(strings.TrimSuffix(base, filepath.Ext(base)), scheme)
+		info, err := os.Stat(path)
+		if err != nil {
+			return
+		}
+
+		if info.IsDir() {
+			title = actions.ApplyScheme(base, scheme)
+			if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
+				return
 			}
-			path := filepath.Join(sysDir, base)
-			title := actions.ApplyScheme(strings.TrimSuffix(base, filepath.Ext(base)), scheme)
-			info, err := os.Stat(path)
+			newName, err := convertGameDir(class, sysDir, path, title)
 			if err != nil {
-				continue
+				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
 			}
+			if err := actions.Retire(path); err != nil {
+				log.Errf("retire failed: %s: %v", path, err)
+			}
+			if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			converted.Add(1)
+			return
+		}
 
-			if info.IsDir() {
-				title = actions.ApplyScheme(base, scheme)
-				if !runner.Act("[%d/%d] convert directory %s/%s -> %s", i+1, total, sys, base, title) {
-					continue
-				}
-				newName, err := convertGameDir(class, sysDir, path, title)
-				if err != nil {
-					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed.Add(1)
-					continue
-				}
-				if err := actions.Retire(path); err != nil {
-					log.Errf("retire failed: %s: %v", path, err)
-				}
-				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-				}
-				converted.Add(1)
-				continue
+		ext := strings.ToLower(filepath.Ext(base))
+		dest := filepath.Join(sysDir, title+".chd")
+		switch ext {
+		case ".cso":
+			if exists(dest) {
+				skipped.Add(1)
+				return
 			}
-
-			ext := strings.ToLower(filepath.Ext(base))
-			dest := filepath.Join(sysDir, title+".chd")
-			switch ext {
-			case ".cso":
-				if exists(dest) {
-					skipped.Add(1)
-					continue
-				}
-				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
-					continue
-				}
-				if err := csoToCHD(path, dest); err != nil {
-					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed.Add(1)
-					continue
-				}
-				_ = actions.Retire(path)
-				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-				}
-				converted.Add(1)
-			case ".cue", ".gdi", ".iso":
-				if exists(dest) {
-					skipped.Add(1)
-					continue
-				}
-				if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
-					continue
-				}
-				mode := chdMode(class, path)
-				if err := makeCHD(mode, path, dest); err != nil {
-					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed.Add(1)
-					continue
-				}
-				_ = actions.Retire(path)
-				if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-				}
-				converted.Add(1)
-			case ".zip", ".7z", ".rar":
-				if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
-					continue
-				}
-				newName, err := extractAndConvert(class, sysDir, path, title)
-				if err != nil {
-					log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
-					failed.Add(1)
-					continue
-				}
-				_ = actions.Retire(path)
-				if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
-				}
-				converted.Add(1)
+			if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
+				return
 			}
+			if err := csoToCHD(path, dest); err != nil {
+				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
+			}
+			_ = actions.Retire(path)
+			if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			converted.Add(1)
+		case ".cue", ".gdi", ".iso":
+			if exists(dest) {
+				skipped.Add(1)
+				return
+			}
+			if !runner.Act("[%d/%d] convert %s/%s -> %s.chd", i+1, total, sys, base, title) {
+				return
+			}
+			mode := chdMode(class, path)
+			if err := makeCHD(mode, path, dest); err != nil {
+				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
+			}
+			_ = actions.Retire(path)
+			if err := gamelist.Rename(lib.Root, sys, base, title+".chd"); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			converted.Add(1)
+		case ".zip", ".7z", ".rar":
+			if !runner.Act("[%d/%d] extract and convert %s/%s -> %s", i+1, total, sys, base, title) {
+				return
+			}
+			newName, err := extractAndConvert(class, sysDir, path, title)
+			if err != nil {
+				log.Errf("failed, source kept: %s/%s: %v", sys, base, err)
+				failed.Add(1)
+				return
+			}
+			_ = actions.Retire(path)
+			if err := gamelist.Rename(lib.Root, sys, base, newName); err != nil {
+				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+			}
+			converted.Add(1)
 		}
 	})
 
-	fmt.Printf("chd: %d converted, %d skipped, %d failed\n", converted.Load(), skipped.Load(), failed.Load())
+	fmt.Printf("chd: %d converted, %d skipped, %d failed in %s\n", converted.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return failed.Load() == 0, nil
 }
 
@@ -176,13 +207,41 @@ func chdMode(class systemdb.Class, imagePath string) string {
 	return "cd"
 }
 
-// makeCHD creates and verifies one CHD via the embedded/PATH chdman.
+// makeCHD creates and verifies one CHD via the embedded/PATH chdman. The
+// candidate file is staged on a RAM-backed scratch directory when
+// chdScratchDir judges it safe to (see its own doc comment for why: it
+// saves a slow-medium read during chdman's own verify pass), falling back
+// to staging next to out exactly as before otherwise. The two cases differ
+// only in how the verified candidate reaches out: a same-filesystem rename
+// when staged next to out, a copy through out+".tmp" (to keep the same
+// atomic-write guarantee) when staged elsewhere.
 func makeCHD(mode, in, out string) error {
 	path, err := tools.Resolve("chdman")
 	if err != nil {
 		return err
 	}
+
+	var scratch string
+	release := func() {}
+	if info, statErr := os.Stat(in); statErr == nil {
+		if dir, rel := chdScratchDir(info.Size()); dir != "" {
+			scratch, release = dir, rel
+		}
+	}
+	defer release()
+
 	tmp := out + ".tmp"
+	if scratch != "" {
+		f, err := os.CreateTemp(scratch, "romctl-chd-*.tmp")
+		if err != nil {
+			return err
+		}
+		tmp = f.Name()
+		f.Close()
+		os.Remove(tmp) // reserve the name, let chdman create the file itself
+		defer os.Remove(tmp)
+	}
+
 	args := []string{"createcd"}
 	if mode == "dvd" {
 		args = []string{"createdvd", "-hs", "2048", "-c", "lzma,zlib"}
@@ -196,7 +255,38 @@ func makeCHD(mode, in, out string) error {
 		os.Remove(tmp)
 		return fmt.Errorf("chdman verify: %w: %s", err, cmdOut)
 	}
-	return os.Rename(tmp, out)
+	if scratch == "" {
+		return os.Rename(tmp, out)
+	}
+	return copyToDest(tmp, out)
+}
+
+// copyToDest copies src - staged on a different filesystem than dst, so
+// os.Rename can't cross it - into dst, through dst+".tmp" first to keep
+// the atomic-write guarantee a same-filesystem rename would otherwise give
+// for free.
+func copyToDest(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 // csoToCHD decompresses a PSP CSO image and converts the result to a

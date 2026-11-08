@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/actions"
 )
@@ -28,6 +29,15 @@ var xmlEscaper = strings.NewReplacer(
 	"&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;",
 )
 
+// renameLocks serializes Rename calls per (libRoot, sys): conversion
+// commands now convert a system's files concurrently, and patchGamelist
+// does a read-modify-write of that system's single gamelist.xml, so two
+// concurrent Rename calls for the same system could otherwise race (each
+// reads the pre-edit file, then the second writer's save silently loses
+// the first edit). Keyed per system rather than one global lock so
+// concurrent Rename calls for different systems still run unimpeded.
+var renameLocks sync.Map
+
 // Rename reflects a ROM move from oldRel to newRel (both paths relative to
 // roms/<sys>/) into sys's gamelist.xml and downloaded_media, if either
 // exists under libRoot/ES-DE/. A ROM that was never scraped (no matching
@@ -37,6 +47,11 @@ func Rename(libRoot, sys, oldRel, newRel string) error {
 	if oldRel == newRel {
 		return nil
 	}
+	lockAny, _ := renameLocks.LoadOrStore(libRoot+"\x00"+sys, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
 	var errs []string
 	if err := patchGamelist(libRoot, sys, oldRel, newRel); err != nil {
 		errs = append(errs, err.Error())

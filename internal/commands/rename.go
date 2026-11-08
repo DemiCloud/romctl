@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
@@ -18,6 +19,7 @@ import (
 // in the given systems (arcade systems are skipped: their filenames are
 // emulator-resolved set names). See internal/actions.ApplyScheme.
 func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
+	start := time.Now()
 	log := cliutil.NewLogger("rename")
 	var renamed, failed atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
@@ -64,7 +66,7 @@ func Rename(lib *library.Library, runner *actions.Runner, systems []string, sche
 			renamed.Add(1)
 		}
 	})
-	fmt.Printf("rename: %d renamed, %d failed\n", renamed.Load(), failed.Load())
+	fmt.Printf("rename: %d renamed, %d failed in %s\n", renamed.Load(), failed.Load(), time.Since(start).Round(time.Second))
 	return nil
 }
 

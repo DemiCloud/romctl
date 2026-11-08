@@ -44,8 +44,9 @@ func (r *Runner) Act(format string, args ...any) bool {
 
 // retired counts successful Retire calls during this process, for the
 // pending-cleanup note main prints after a mutating run. One romctl
-// invocation runs a single command, but conversion commands now run their
-// per-system work concurrently, so this is atomic rather than a plain int.
+// invocation runs a single command, but conversion commands run every
+// matching file across every system concurrently, so this is atomic
+// rather than a plain int.
 var retired atomic.Int64
 
 // RetiredCount reports how many paths Retire has moved to _to_delete/

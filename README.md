@@ -114,15 +114,26 @@ directory names under `roms/`; omit them or pass `all` for every system.
 Every mutating command below applies its changes immediately; pass
 `--dry-run`/`-n` to preview instead. By default every command prints a
 one-line summary when it finishes (e.g. `chd: 3 converted, 1 skipped, 0
-failed`) instead of a line per file; pass `-v`/`--verbose` to also print
-each individual action as it happens. `--dry-run` always previews in full
-regardless of `-v` - that's the point of a dry run.
+failed in 12s`) instead of a line per file; pass `-v`/`--verbose` to also
+print each individual action as it happens. `--dry-run` always previews in
+full regardless of `-v` - that's the point of a dry run. After a mutating
+command finishes, if `[sync] host`/`--sync-host` is configured, romctl also
+prints a one-line reminder to run `sync` and push the changes up.
+Conversion commands (`chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `unpack`)
+convert every matching file across every system given in parallel, scaled
+to available CPU cores - pass one large system to convert, not one call per
+system, to get the full benefit. On Linux, `chd`/`dvd` also stage the
+candidate CHD on `/dev/shm` (tmpfs) when there's room, skipping a
+redundant read-back from a slow ROM library (e.g. an SD card) during
+chdman's own verify step; this is size-aware and silently falls back to
+disk when it isn't safe to use.
 
 | Command | Action |
 |---|---|
 | `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. |
 | `bios` | Audit BIOS files only. |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. |
+| `fix` | Run every local fix step below in order (`unpack`, `chd`, `dvd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge systems. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. |
@@ -143,8 +154,10 @@ Typical session:
 
 ```bash
 romctl check                  # what's wrong
-romctl chd psx --dry-run      # what would change
-romctl chd psx                # change it
+romctl fix --dry-run          # what fix would change, across every local step
+romctl fix                    # or one step at a time:
+romctl chd psx --dry-run      #   what would change
+romctl chd psx                #   change it
 romctl check psx              # confirm
 romctl clean psx              # after testing the new files (asks to confirm)
 ```
