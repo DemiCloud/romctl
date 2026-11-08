@@ -12,65 +12,128 @@ import (
 
 	"github.com/demicloud/romctl/internal/audit"
 	"github.com/demicloud/romctl/internal/cliutil"
+	"github.com/demicloud/romctl/internal/library"
 )
 
-// checkDuplicates finds files in sysDir with identical content (exact
-// byte-for-byte matches, via CRC32) and flags all but the first in each
-// group as a WARN finding. It's a separate, opt-in pass (see --dupes)
-// rather than part of the default check: unlike every other check, it has
-// to read every file's full content, which is a meaningfully different
-// cost on a library with large CHD/ISO files.
+// Dupes scans every given system for exact (byte-for-byte) duplicate
+// files, flagging all but the first of each group as a WARN finding. Its
+// own command, rather than a check flag: unlike every other check, this
+// means reading every file's full content, which can take long enough on
+// a library with large CHD/ISO files that folding it into check's own
+// instant, all-categories-at-once output made a long run indistinguishable
+// from a hang - the same reasoning that already split `bios` out as its
+// own command.
 //
 // This only catches exact duplicates. A game present under two different
 // region dumps (different hashes, same underlying game) isn't detected -
 // doing that precisely needs No-Intro/Redump-style DAT clone-group data,
 // which is a deliberately separate, bigger scope question.
-func checkDuplicates(report *audit.Report, sys, sysDir string) {
-	entries, err := os.ReadDir(sysDir)
-	if err != nil {
-		return
-	}
+//
+// Default shows a live "dupes: done/total" counter while it runs
+// (cliutil.Progress, the same primitive every mutating command already
+// uses for this), hashing every system's files across a worker pool.
+// -v/--verbose, on a real Fancy terminal (cliutil.CanAnimate), instead
+// drives cliutil.ParallelLive per system: one spinning line per active
+// worker naming the file it's hashing right now, finalized to a
+// permanent colored ✓/✗ the moment that worker moves to its next file.
+// Verbose without a usable terminal (plain/structured output, or
+// redirected to a file) falls back to one plain "[i/total] hash sys/file"
+// line per file instead, processed one at a time to keep the printed
+// order sane. Either way, an actual duplicate is only ever found after
+// every file in its system has already finished hashing (the grouping
+// needs every hash first), so it never has to interleave with a live
+// display still in progress - it always prints via the ordinary
+// Report.Add, same as every other check finding.
+func Dupes(lib *library.Library, systems []string, verbose bool, format cliutil.Format) (bool, error) {
+	report := audit.New(os.Stdout, verbose, format, "")
 
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || !hashable(e.Name()) {
-			continue
-		}
-		names = append(names, e.Name())
+	type sysFiles struct {
+		sys   string
+		names []string
 	}
-
-	// Hashing full file contents is the expensive part of --dupes (the
-	// whole reason it's opt-in) - do it across a worker pool instead of
-	// one file at a time.
-	var mu sync.Mutex
-	byHash := map[uint32][]string{}
-	cliutil.Parallel(names, func(name string) {
-		sum, err := crc32File(filepath.Join(sysDir, name))
+	var bySys []sysFiles
+	total := 0
+	for _, sys := range systems {
+		sysDir := filepath.Join(lib.Roms, sys)
+		entries, err := os.ReadDir(sysDir)
 		if err != nil {
-			return
-		}
-		mu.Lock()
-		byHash[sum] = append(byHash[sum], name)
-		mu.Unlock()
-	})
-
-	hashes := make([]uint32, 0, len(byHash))
-	for h := range byHash {
-		hashes = append(hashes, h)
-	}
-	sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
-
-	for _, h := range hashes {
-		names := byHash[h]
-		if len(names) < 2 {
 			continue
 		}
-		sort.Strings(names)
-		for _, name := range names[1:] {
-			report.Add(audit.Warn, audit.CategoryDuplicates, sys, name,
-				fmt.Sprintf("identical to %s (CRC32 %08X)", names[0], h), "")
+		var names []string
+		for _, e := range entries {
+			if e.IsDir() || !hashable(e.Name()) {
+				continue
+			}
+			names = append(names, e.Name())
+		}
+		report.Scan(audit.CategoryDuplicates, len(names))
+		bySys = append(bySys, sysFiles{sys, names})
+		total += len(names)
+	}
+
+	live := verbose && cliutil.CanAnimate(format)
+	doneSoFar := 0
+	process := func(tick func()) {
+		for _, sf := range bySys {
+			sysDir := filepath.Join(lib.Roms, sf.sys)
+			var mu sync.Mutex
+			byHash := map[uint32][]string{}
+			hashOne := func(name string) bool {
+				sum, err := crc32File(filepath.Join(sysDir, name))
+				tick()
+				if err != nil {
+					return false
+				}
+				mu.Lock()
+				byHash[sum] = append(byHash[sum], name)
+				mu.Unlock()
+				return true
+			}
+
+			switch {
+			case live:
+				cliutil.ParallelLive(format, sf.names, func(name string) string { return sf.sys + "/" + name }, hashOne)
+			case verbose:
+				for i, name := range sf.names {
+					fmt.Printf("[%d/%d] hash %s/%s\n", doneSoFar+i+1, total, sf.sys, name)
+					hashOne(name)
+				}
+				doneSoFar += len(sf.names)
+			default:
+				cliutil.Parallel(sf.names, func(name string) { hashOne(name) })
+			}
+
+			hashes := make([]uint32, 0, len(byHash))
+			for h := range byHash {
+				hashes = append(hashes, h)
+			}
+			sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
+			for _, h := range hashes {
+				names := byHash[h]
+				if len(names) < 2 {
+					continue
+				}
+				sort.Strings(names)
+				for _, name := range names[1:] {
+					report.Add(audit.Warn, audit.CategoryDuplicates, sf.sys, name,
+						fmt.Sprintf("identical to %s (CRC32 %08X)", names[0], h), "")
+				}
+			}
 		}
 	}
+
+	if live || verbose {
+		process(func() {})
+	} else {
+		cliutil.Progress(format, false, false, "dupes", total, process)
+	}
+
+	if format.Structured() {
+		return !report.Failed(), report.Encode(os.Stdout, format)
+	}
+	report.Table(os.Stdout)
+	report.Fixes(os.Stdout)
+	return !report.Failed(), nil
 }
 
 // hashable reports whether a filename is worth hashing for duplicate

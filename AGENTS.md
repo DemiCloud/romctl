@@ -33,7 +33,7 @@ Key `internal/` packages:
 | `executil`, `ttyguard` | Running external processes safely (stdin from the null device for `chdman`/`dolphin-tool`/`extract-xiso`; live-streamed for `rsync`/`ssh`), terminal state save/restore. |
 | `discimage` | Unpack-archive-then-build-plain-ISO9660, keyed by system class (a `Spec` table), not hardcoded to one command. PS3 is the only class registered today (RPCS3 doesn't read CHD, unlike every CD/DVD/UMD-class system); a future system needing the same treatment is a new `Spec`, not new logic. `commands.PS3` is a thin wrapper over it. |
 | `gamelist` | Keeps ES-DE's `gamelist.xml`/`downloaded_media` pointed at the right files when a rename/convert command moves a ROM that's already been scraped. A silent no-op when `ES-DE/` isn't present locally or the ROM was never scraped. Also used by `commands.Scrape` to correct Skyscraper's own path/media naming for `Title.m3u/` games (see that package's doc comment). |
-| `audit`, `commands` | `check`/`bios` findings and summary; one file per command. `check --dupes` (`internal/commands/duplicates.go`) adds an exact-duplicate-file scan (CRC32 of full file content) as its own opt-in `audit.Category`, off by default since it's the one check that has to read every file's full content. |
+| `audit`, `commands` | `check`/`bios`/`dupes`/`verify` findings and summary; one file per command. `dupes` (`internal/commands/duplicates.go`) and `verify` (`internal/commands/verify.go`) are their own commands, not `check` flags (an earlier version of `verify` was exactly that, `check --verify`) - both have to read every file's full content (exact-duplicate CRC32 hashing; a full chdman `verify` pass, every compressed hunk's checksum, against every `.chd` - bare files and every disc inside a `Title.m3u/` directory), which can take long enough on a large library that folding either into check's own instant, all-categories-at-once output made a long run indistinguishable from a hang - the same reasoning that already split `bios` out. `verify` additionally resolves `tools.Resolve("chdman")` up front, erroring out before any work starts if it's unavailable. Default mode for both shows a live `cliutil.Progress` done/total counter while hashing/verifying across a `cliutil.Parallel` worker pool, same as any other long batch. `-v`/`--verbose` on a real Fancy terminal (`cliutil.CanAnimate`) instead drives `cliutil.ParallelLive` (`internal/cliutil/spinner.go`): one live spinner row per active worker, finalizing to a permanent colored `✓`/`✗` line the instant that worker moves to its next file - `audit.Report.AddQuiet` records a `verify` failure there instead of `Add`, so its own immediate print doesn't land on the same terminal and corrupt the display's redraw accounting (`dupes` needs no such split: a duplicate is only ever found after every file in its system has already finished hashing, so `Add` never fires while that system's live display is still active). The worker-row count is `GOMAXPROCS` capped by `cliutil.maxLiveSlots` - the terminal's actual current row count (via `term.GetSize`), not raw core count: an earlier version used `GOMAXPROCS` outright, which on a many-core machine is routinely taller than the terminal showing it, and once a redraw's "move cursor up N rows" exceeds what's visible it clamps at row 1 instead of reaching there, so every redraw prints another copy instead of overwriting the last (confirmed against a real run). Capping the row count fixes that while keeping genuine parallelism, rather than dropping to one file at a time. Verbose without a usable terminal (plain/structured output, or redirected to a file) falls back to one plain `[i/total] hash|verify sys/file` line per file, processed one at a time there to keep the printed order sane. |
 
 ## Invariants
 
@@ -63,6 +63,8 @@ Key `internal/` packages:
   before the first mutating action of a `chd`/`rvz`/`scrape` run, never
   mid-run, and its error message says exactly what's missing and how to
   get it. `romctl tools` reports the same resolution read-only, up front.
+  `verify`, despite being read-only itself, follows the same "resolve
+  before doing any work" rule since it still shells out to chdman.
 - **External tool invocations go through `executil`.** `chdman`,
   `dolphin-tool` and `extract-xiso` get stdin from the null device via
   `executil.Run` (buffered output, shown only on failure); `rsync`/`ssh`
@@ -90,11 +92,37 @@ Key `internal/` packages:
   `golang.org/x/term` (cross-platform terminal state), `BurntSushi/toml`
   (config file parsing and `--format=toml` output - the standard library
   has no TOML support), `gopkg.in/yaml.v3` (`--format=yaml` output - same
-  gap for YAML), and the pure-Go archive/compression libraries in
-  `internal/archive` and `internal/formats/cso` (`bodgit/sevenzip`,
-  `nwaples/rardecode`, `pierrec/lz4`).
+  gap for YAML), `jedib0t/go-pretty` (`internal/cliutil`'s rich
+  unicode-box-drawing tables - `RenderTable` for a bespoke one like
+  audit.Report's Checks/Fixes (per-cell colors, glyphs, aggregation a
+  plain struct dump can't express), `RenderList` for a plain "slice of
+  `col`-tagged records" one (`list`, `systems`, `tools`, `bios -v`); the
+  standard library has no table renderer, and go-pretty measures column
+  width correctly around the raw ANSI color codes `cliutil.ColorsFor`
+  already produces everywhere else, so cell text can stay colored without
+  a second color abstraction), and the pure-Go archive/compression
+  libraries in `internal/archive` and `internal/formats/cso`
+  (`bodgit/sevenzip`, `nwaples/rardecode`, `pierrec/lz4`).
 - One command per file under `internal/commands/`; each takes a
   `*library.Library` and, for mutating commands, an `*actions.Runner`.
+- A command that's just "render a slice of records" (`list`, `systems`,
+  `tools`, `bios -v`) builds that slice as a struct with a `col:"Header"`
+  tag on every field that belongs in a table/CSV column (a field with no
+  `col` tag, e.g. a free-length list, is left out of both) and renders it
+  with one call to `cliutil.RenderList` - never a hand-rolled `Printf`
+  table or a bespoke CSV header/rows pair. Every field, `col`-tagged or
+  not, keeps a real json/yaml/toml tag and always encodes there - `col`
+  only ever adds or withholds table/CSV visibility on top of that, never
+  `json:"-"`, so the same text a table/CSV cell shows is readable straight
+  out of `--format=json` too. A field too technical for the table but
+  worth keeping in structured output in full (e.g. `bios -v`'s exact MD5/
+  size detail) gets its own short, `col`-tagged counterpart instead of
+  being hidden from one form or the other - see commands.biosInventoryRow's
+  Name/Issue (table+json) alongside Label/Message (json only). A command
+  whose rows need per-cell logic a plain struct dump can't express
+  (colors, glyphs, aggregation - see `audit.Report`'s Checks/Fixes tables)
+  builds `[]table.Row` itself and calls `cliutil.RenderTable` directly
+  instead.
 - Default to no comments; add one only when the *why* isn't obvious from
   the code (a format-spec quirk, a deliberate behavior change from the
   Bash original, a workaround for a specific tool's behavior).

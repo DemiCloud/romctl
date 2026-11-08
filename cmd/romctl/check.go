@@ -39,6 +39,54 @@ func newCheckCmd() *cobra.Command {
 	return cmd
 }
 
+func newDupesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "dupes [SYSTEM...|all]",
+		Short:             "scan for exact (byte-for-byte) duplicate files (read-only)",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeSystems,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			systems, err := resolveSystems(args)
+			if err != nil {
+				return err
+			}
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			ok, err := commands.Dupes(appCtx.lib, systems, verbose, appCtx.format)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errSilentFailure
+			}
+			return nil
+		},
+	}
+}
+
+func newVerifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "verify [SYSTEM...|all]",
+		Short:             "verify every CHD's data against its own checksums (read-only)",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeSystems,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			systems, err := resolveSystems(args)
+			if err != nil {
+				return err
+			}
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			ok, err := commands.Verify(appCtx.lib, systems, verbose, appCtx.format)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errSilentFailure
+			}
+			return nil
+		},
+	}
+}
+
 func newBiosCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:               "bios [SYSTEM...|all]",

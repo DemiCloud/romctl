@@ -44,7 +44,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "list", "fix", "rename", "unpack", "chd", "m3u", "n64",
+	"check", "bios", "dupes", "verify", "list", "fix", "rename", "unpack", "chd", "m3u", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "systems", "tools",
 }
 
@@ -57,12 +57,14 @@ var commandGroups = []struct {
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Other:", []string{"bios", "list", "scrape", "clean", "systems", "tools"}},
+	{"Other:", []string{"bios", "dupes", "verify", "list", "scrape", "clean", "systems", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
 	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagScheme, flagFormat}},
 	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"dupes":    {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"verify":   {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"list":     {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
 	"fix":      {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagDest, flagFormat}},
 	"rename":   {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScheme, flagFormat}},

@@ -184,8 +184,10 @@ falls back to disk when it isn't safe to use.
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files. Read-only. Exits 1 if anything is `FAIL`. `--dupes` adds an exact-duplicate-file scan; `-v`/`--verbose` prints every finding instead of the `Checks:`/`Fixes:`/summary sections. See [Output format](#output-format) for `--format`. |
+| `check` | Audit systems and BIOS files (naming, structure, containers, BIOS). Read-only. Exits 1 if anything is `FAIL`. `-v`/`--verbose` prints every finding instead of the Checks/Fixes tables. See [Output format](#output-format) for `--format`. |
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
+| `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
+| `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
 | `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
@@ -223,17 +225,35 @@ whatever command you actually typed to invoke romctl — `./romctl`, a bare
 you passed one, so it can be copy-pasted as-is and will still target the
 right library root even from a different directory or shell session.
 
-By default `check` prints a live spinner per category while it runs
-(naming, structure, containers, bios, and duplicates if `--dupes` is set -
-each category scans every system in parallel), then three sections:
-`Checks:` (a one-line tally per category), `Fixes:` (how to resolve what
-was found - one collapsed line per command-backed fix, e.g. "12 finding(s)
--> [romctl rename all]", since running it fixes every instance; one line per
-finding for anything without a command, naming the actual file, e.g.
-"psx bios/scph5501.bin: acquire bios/scph5501.bin and place it in bios/"),
-and the colorized summary. Pass `-v`/`--verbose` to skip the spinners and
-print every individual finding as it's found instead (the previous,
-only behavior):
+By default `check` prints a live status line per category while it runs
+(naming, structure, containers, bios - each category scans every system
+in parallel), then two rich tables
+(unicode box-drawing in `fancy` format, plain ASCII under `--format=plain`
+- see [Output format](#output-format)):
+
+- **Checks**: one row per category - a pass/fail glyph, and how many
+  files came back Pass/Warn/Fail/Info. A category that wasn't run at all
+  (`bios` with no `bios/` directory) gets a row of dashes instead of real
+  counts, since nothing there is actually knowable either way.
+- **Fixes** (`Issue Type` / `System` / `Fix`): how to resolve what was
+  found - `INFO` findings need no action, so only `FAIL`/`WARN` ones get
+  a row. One row per command-backed fix type, naming every system it
+  actually affects (or `all` once more than one does, since every fix
+  command also accepts `all`), e.g. `romctl rename snes` when only SNES
+  needs it. Every other finding is grouped by what's wrong: a kind with
+  only one instance still names its own specific file (e.g. "acquire
+  bios/scph5501.bin and place it in bios/"); more than one collapses into
+  a single row instead of one per file, pointing at the command that
+  shows them all (`romctl check -v`). BIOS findings always collapse this
+  way, however many there are - `System` reads `BIOS` rather than any one
+  console, and the row points at `romctl bios -v`, since that's the
+  dedicated command for "what's wrong with my BIOS files", not something
+  `check` itself should try to enumerate. The table is omitted entirely
+  on a clean run.
+
+Pass `-v`/`--verbose` to skip the live status lines and tables and print
+every individual finding as it's found instead (the previous, only
+behavior):
 
 `LEVEL  system  file: message  [suggested command]`.
 
@@ -243,21 +263,58 @@ only behavior):
 | `WARN` | Works, but out of convention: tags, archives, raw disc images, wrong container |
 | `INFO` | Optional improvement or pending cleanup |
 
-A run with no `FAIL` or `WARN` findings ends with `✓ Clean` (`OK Clean`
-under `--format=plain`). See [Output format](#output-format) for the
-fancy/plain/json/yaml/toml/csv split this - and every other command's
-output - follows.
+### Duplicate and CHD data checks
 
-`check --dupes` additionally scans each system for exact (byte-for-byte)
-duplicate files, flagging every copy after the first. This is off by
-default: unlike every other check, finding exact duplicates means reading
-every file's full content, which takes meaningfully longer on a library
-with large CHD/ISO files - though every file within a system is now
-hashed in parallel, so the wall-clock cost is lower than it used to be.
-It only catches true duplicates - a game present under two different
-region dumps (different hashes, same underlying game) isn't detected;
-doing that precisely needs No-Intro/Redump-style DAT clone-group data,
-which is out of scope for now.
+`dupes` and `verify` are their own commands rather than `check` flags
+(an earlier version of `verify` was exactly that - `check --verify`), for
+the same reason `bios` already is: unlike every other check, both mean
+reading every file's full content, which can take long enough on a
+library with large CHD/ISO files that folding either into check's own
+instant, all-categories-at-once output made a long run indistinguishable
+from a hang. As their own commands, they get their own progress UX that
+actually fits a long scan, without changing what `check -v` prints for
+everything else.
+
+`dupes [SYSTEM...|all]` scans each given system for exact (byte-for-byte)
+duplicate files, flagging every copy after the first. It only catches
+true duplicates - a game present under two different region dumps
+(different hashes, same underlying game) isn't detected; doing that
+precisely needs No-Intro/Redump-style DAT clone-group data, which is out
+of scope for now.
+
+`verify [SYSTEM...|all]` hands every `.chd` (bare files and every disc
+inside a `Title.m3u/` playlist directory) to chdman's own `verify`
+subcommand - a full pass over every compressed hunk's checksum, not just
+the header/metadata read `check`'s `containers` category already does for
+free. This catches corruption the header-only check can't: a `.chd` whose
+header is intact but whose data got corrupted afterward (bitrot, a
+transfer interrupted partway through). It needs chdman itself available
+(embedded or on `PATH`; see [Requirements](#requirements)), failing up
+front with the same actionable message any other chdman-backed command
+would if it isn't.
+
+Both default to a live "done/total" counter on a real terminal while they
+hash/verify across a worker pool (the same `cliutil.Progress` every
+mutating command already uses for a long batch), then print the same
+Checks/Fixes tables `check` does.
+
+`-v`/`--verbose` on a real Fancy terminal instead shows a live, per-file
+view: one spinning line per active worker, naming the file it's
+processing right now, turning into a permanent colored `✓`/`✗` line the
+moment that worker finishes and immediately picking up its next file -
+so a long run actually shows multiple files in progress at once, not
+just a bare count or a single name sitting still. The number of visible
+worker rows is capped to what the terminal can actually display (its
+current row count, not raw CPU core count): a block taller than the
+terminal can't be redrawn in place - "move the cursor up N rows" clamps
+at row 1 once N exceeds what's visible, so every redraw ends up printing
+another copy instead of overwriting the last one. Capping the row count
+fixes that directly while keeping real concurrency, rather than either
+risking that mess again or dropping to one file at a time to avoid it.
+Verbose output with no real terminal to animate on (plain/structured
+output, or redirected to a file) falls back to one plain
+`[i/total] hash sys/file` / `[i/total] verify sys/file` line per file
+instead, processed one at a time there to keep the printed order sane.
 
 ### Stray save files
 
@@ -266,8 +323,8 @@ ROM instead of to RetroDECK's own `saves/`/`states/` directories, so a
 library built up over years - especially one migrated from a standalone
 emulator setup - can end up with thousands of `.sav`/`.srm`/`.sh`/`.state`
 files loose in `roms/`. `check` flags these (`structure`, "does not belong
-in roms/") and collapses them into a single `Fixes:` line rather than one
-per file, since one command fixes every instance:
+in roms/") and collapses them into a single Fixes-table row rather than
+one per file, since one command fixes every instance:
 
 ```
 romctl saves all
@@ -456,8 +513,14 @@ Both commands normally print only what's actually wrong (same as every
 other check category); `romctl bios -v` instead prints the **full
 inventory** - every file below, including the ones already present and
 correct - so there's one place to see exactly what a given library has,
-is missing, or doesn't need. `--format=json`/`yaml`/`toml`/`csv` works on
-both the problems-only and `-v` full-inventory output.
+is missing, or doesn't need. `-v`'s table stays terse on purpose: a short
+name and a couple-word issue ("missing", "hash mismatch"), not an exact
+hash or MAC-address aside - most people running this don't need either.
+`--format=json`/`yaml`/`toml` carries the full detail (exact hash values,
+the complete technical note) instead, for scripting or a closer look;
+`--format=csv` stays as terse as the table, since it's still a columns
+format. All four work on both the problems-only and `-v` full-inventory
+output.
 
 | System | File(s) in `bios/` | Required | Notes |
 |---|---|---|---|
@@ -468,8 +531,8 @@ both the problems-only and `-v` full-inventory output.
 | Sega CD | `bios_CD_U.bin`, `bios_CD_E.bin`, `bios_CD_J.bin` | One of them | |
 | PC Engine CD / TurboGrafx-CD | `syscard3.pce` | Yes | `syscard1/2.pce` and `gexpress.pce` for a few titles only - optional. |
 | Dreamcast | `dc/dc_boot.bin` | Yes | `dc/dc_flash.bin` holds settings and varies; never checked. |
-| Naomi / Atomiswave | `dc/naomi.zip`, `dc/awbios.zip` | Yes | |
-| Xbox | `mcpx_1.0.bin`, `Complex.bin`, `xbox_hdd.qcow2` | Yes | At the top level of `bios/`, under exactly these names. `xbox_hdd.qcow2` holds game saves once used - never hashed. |
+| Naomi / Atomiswave | `dc/naomi.zip`, `dc/awbios.zip` | Yes | Presence-checked only - a zip's own byte layout varies between legitimate sources even when the ROM content inside is identical, so no single hash is correct. |
+| Xbox | `mcpx_1.0.bin`, `Complex.bin`, `xbox_hdd.qcow2` | Yes | At the top level of `bios/`, under exactly these names. `mcpx_1.0.bin` (the fixed MCPX boot ROM) is hashed; `Complex.bin` (at least two legitimately different builds circulate under this name) and `xbox_hdd.qcow2` (holds game saves once used) are presence-checked only. |
 | Nintendo DS | `bios7.bin`, `bios9.bin`, `firmware.bin` | No | melonDS has free replacements. `firmware.bin` is per-console (256 KiB, size-checked only - it holds a real console's own Wi-Fi MAC address, so it has no canonical hash). |
 | GB / GBC / GBA / SGB | `gb_bios.bin`, `gbc_bios.bin`, `gba_bios.bin`, `sgb_bios.bin` | No | Boot logos and accuracy edge cases only. |
 | Famicom Disk System | `disksys.rom` | Yes | |
@@ -755,7 +818,7 @@ Notes:
   [Igir](https://igir.io/).
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.
-- **Picking one region's dump over another.** `--dupes` only catches
+- **Picking one region's dump over another.** `dupes` only catches
   byte-for-byte identical files; it doesn't single out one region's dump
   of the same game, which needs No-Intro/Redump-style clone-group data.
   That's on you, same as naming tags - see [Naming](#naming).
