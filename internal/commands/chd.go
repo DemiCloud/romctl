@@ -371,9 +371,14 @@ func reencodeAsDVD(path string) error {
 }
 
 // csoToCHD decompresses a PSP CSO image and converts the result to a
-// DVD-type CHD.
+// DVD-type CHD. The decompressed ISO (routinely 1-4GB) is staged next to
+// csoPath, inside its own system directory, rather than the OS's global
+// temp dir - same reasoning as reencodeAsDVD's scratch directory: that temp
+// dir is frequently tmpfs or a separate, much smaller partition than the
+// ROM library (e.g. a Steam Deck's /tmp vs. its SD card), and writing a
+// multi-GB image there risks exhausting it outright.
 func csoToCHD(csoPath, out string) error {
-	tmp, err := os.MkdirTemp("", "romctl-cso")
+	tmp, err := os.MkdirTemp(filepath.Dir(csoPath), "_extract.*")
 	if err != nil {
 		return err
 	}
