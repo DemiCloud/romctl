@@ -12,3 +12,10 @@ internal/tools/data/*/extract-xiso
 internal/tools/data/*/extract-xiso.exe
 internal/tools/data/*/skyscraper
 internal/tools/data/*/skyscraper.exe
+
+# DAT files staged for embedding (manually downloaded, staged by
+# `make dats`); the MANIFEST placeholders in these directories stay
+# tracked. Same rationale as the native tools above - a fetched/acquired
+# build artifact, not source - plus Redump's own redistribution terms
+# aren't confirmed, so these shouldn't end up committed by accident.
+internal/datdb/data/*/*.dat
