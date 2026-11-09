@@ -392,7 +392,12 @@ of this flag.
 
 Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game
-(1G1R-style) the way a full ROM manager would.
+(1G1R-style) the way a full ROM manager would. Pass `--region NAME`
+(repeatable) to only compare games tagged with that region - e.g.
+`--region USA` to check just the US releases. No-Intro/Redump DATs have no
+structured region field; this matches against the parenthesized tag(s) in
+the DAT's own game name (`"Super Mario Land (USA, Europe)"`), case-
+insensitively, same convention both providers already use.
 
 ### Identify: what is this file?
 

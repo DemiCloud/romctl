@@ -61,7 +61,7 @@ func TestCollection(t *testing.T) {
 
 	lib := library.Open(root)
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, true, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, true, nil, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestCollectionHidesMissingByDefault(t *testing.T) {
 
 	lib := library.Open(root)
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, false, nil, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,6 +127,79 @@ func TestCollectionHidesMissingByDefault(t *testing.T) {
 	}
 }
 
+func TestGameRegionTags(t *testing.T) {
+	got := gameRegionTags("Donkey Kong (Europe, Australia) (Rev 1)")
+	want := []string{"Europe", "Australia", "Rev 1"}
+	if len(got) != len(want) {
+		t.Fatalf("gameRegionTags() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("gameRegionTags() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestMatchesRegion(t *testing.T) {
+	name := "Super Mario Land (USA, Europe)"
+	if !matchesRegion(name, []string{"usa"}) {
+		t.Errorf("expected %q to match region %q (case-insensitive)", name, "usa")
+	}
+	if matchesRegion(name, []string{"Japan"}) {
+		t.Errorf("expected %q not to match region %q", name, "Japan")
+	}
+	if !matchesRegion(name, nil) {
+		t.Error("expected an empty wanted list to match everything")
+	}
+}
+
+// writeRegionDat writes a three-game Logiqx DAT, each tagged with a
+// different region, all deliberately Missing (no local file hashes
+// them) - TestCollectionFiltersByRegion only cares which Games --region
+// lets through, not have/missing status.
+func writeRegionDat(t *testing.T, dir string) {
+	t.Helper()
+	dat := `<datafile><header><name>Nintendo - Game Boy</name><version>test</version></header>
+<game name="USA Game (USA)"><rom name="usa.gb" size="1" crc="11111111"/></game>
+<game name="Europe Game (Europe)"><rom name="europe.gb" size="1" crc="22222222"/></game>
+<game name="Japan Game (Japan)"><rom name="japan.gb" size="1" crc="33333333"/></game>
+</datafile>`
+	datDir := filepath.Join(dir, "no-intro")
+	if err := os.MkdirAll(datDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(datDir, "Nintendo - Game Boy.dat"), []byte(dat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCollectionFiltersByRegion(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "roms", "gb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	datDir := t.TempDir()
+	writeRegionDat(t, datDir)
+
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, true, []string{"USA"}, cliutil.FormatPlain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Collection reported failure")
+		}
+	})
+
+	if !strings.Contains(out, "USA Game") {
+		t.Errorf("expected USA Game to be reported with --region USA, got:\n%s", out)
+	}
+	if strings.Contains(out, "Europe Game") || strings.Contains(out, "Japan Game") {
+		t.Errorf("expected only the USA-tagged game with --region USA, got:\n%s", out)
+	}
+}
+
 func TestCollectionUnknownSystemSkipped(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "roms", "arcade"), 0o755); err != nil {
@@ -135,7 +208,7 @@ func TestCollectionUnknownSystemSkipped(t *testing.T) {
 	lib := library.Open(root)
 
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"arcade"}, "", false, false, false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"arcade"}, "", false, false, false, nil, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}

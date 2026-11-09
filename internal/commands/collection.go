@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -78,12 +79,16 @@ type collectionRow struct {
 // flag could collapse these; v1 doesn't, to keep the matching logic
 // itself simple.
 //
+// regions (--region, repeatable) filters which of those variants get
+// compared at all - see filterRegion. An empty regions means no filter:
+// every variant, same as today.
+//
 // Hashing runs the same way dupes/verify already do: a live per-worker
 // spinner display in verbose mode on a real terminal, one plain
 // "[i/total] hash sys/file" line per file in verbose mode otherwise, or a
 // "collection: done/total" counter by default - across a worker pool
 // either way.
-func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose, showMissing bool, format cliutil.Format) (bool, error) {
+func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose, showMissing bool, regions []string, format cliutil.Format) (bool, error) {
 	colors := cliutil.ColorsFor(format)
 	esdeNames, _ := lib.ESDESystems()
 	failed := false
@@ -117,6 +122,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		if verifyCHD && isDiscClass(systemdb.ClassOf(sys)) {
 			df = stripSidecarROMs(df)
 		}
+		df = filterRegion(df, regions)
 		entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
 		if err != nil {
 			continue
@@ -223,6 +229,63 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		}
 	}
 	return !failed, nil
+}
+
+// regionTagRE matches a single parenthesized tag group in a No-Intro/
+// Redump game name, e.g. the "(USA)" in "Super Mario Land (USA)" or the
+// "(Europe, Australia)" in "Donkey Kong (Europe, Australia) (Rev 1)" -
+// region has no field of its own in the Logiqx DAT schema (see
+// datdb.Game), only this naming convention.
+var regionTagRE = regexp.MustCompile(`\(([^()]+)\)`)
+
+// gameRegionTags returns every comma-split tag from every parenthesized
+// group in name - a mix of actual regions ("USA", "Europe"), languages
+// ("En", "Fr"), and anything else the convention tags that way ("Rev 1",
+// "Unl", "Proto"). matchesRegion only ever compares these against a
+// caller-supplied region name, so an unrelated tag never matches by
+// accident.
+func gameRegionTags(name string) []string {
+	var tags []string
+	for _, m := range regionTagRE.FindAllStringSubmatch(name, -1) {
+		for _, part := range strings.Split(m[1], ",") {
+			tags = append(tags, strings.TrimSpace(part))
+		}
+	}
+	return tags
+}
+
+// matchesRegion reports whether name carries any of wanted among its
+// parenthesized tags, case-insensitively. An empty wanted always matches
+// (no filter).
+func matchesRegion(name string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, tag := range gameRegionTags(name) {
+		for _, w := range wanted {
+			if strings.EqualFold(tag, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// filterRegion returns a copy of df containing only the Games whose name
+// carries one of wanted's region tags (see matchesRegion) - --region's
+// filter, applied before Match so an unwanted region's games are never
+// even reported as missing. An empty wanted returns df unchanged.
+func filterRegion(df *datdb.Datafile, wanted []string) *datdb.Datafile {
+	if len(wanted) == 0 {
+		return df
+	}
+	out := &datdb.Datafile{Header: df.Header}
+	for _, g := range df.Games {
+		if matchesRegion(g.Name, wanted) {
+			out.Games = append(out.Games, g)
+		}
+	}
+	return out
 }
 
 func collectionRowFor(sys, display string, m datdb.MatchResult, nameToCRC map[string]string, colors cliutil.Colors) collectionRow {
