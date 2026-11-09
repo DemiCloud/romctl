@@ -10,13 +10,15 @@ package systemdb
 // (see Class's doc comments), otherwise a best-effort pick - see the
 // inline notes below for the genuinely uncertain ones.
 //
-// Real No-Intro/Redump filenames also carry their own dynamic
-// "<System> (<timestamp>).dat" suffix that changes release to release;
-// System here is deliberately just the stable part. internal/datdb's
-// Stage function (driven by `make dats`) matches a downloaded file to
-// its System entry by glob (ignoring the timestamp) and strips it when
-// staging for embedding, so Load's own lookup can stay a plain exact
-// match.
+// Real No-Intro/Redump filenames also carry their own dynamic timestamp
+// suffix that changes release to release - "<System> (<timestamp>).dat"
+// for No-Intro, "<System> - Datfile (<id>) (<date> <time>).dat" for a
+// Redump per-system download (see internal/datdb's datTimestampSuffix/
+// redumpSuffix) - and System here is deliberately just the stable part
+// before it. internal/datdb's Stage function (driven by `make dats`)
+// matches a downloaded file to its System entry this way and strips the
+// suffix when staging for embedding, so Load's own lookup can stay a
+// plain exact match.
 type DatSource struct {
 	Provider string // "no-intro" (cartridge/handheld) or "redump" (disc-based)
 	System   string
@@ -33,31 +35,34 @@ type DatSource struct {
 // dedicated pack) is left out rather than guessed.
 //
 // The no-intro entries below were cross-checked against a real 2026-11-08
-// "No-Intro Love Pack (DAT)" listing; the redump entries are still
-// unverified against a real Redump download as of this writing (see
-// AGENTS.md's "DAT snapshot status"). internal/datdb's Stage re-verifies
-// a staged file's own <header><name> against the System value here
-// before embedding it regardless, so a drifted or wrong pack name is
-// caught there, not silently mismatched at runtime.
+// "No-Intro Love Pack (DAT)" listing. The redump entries were cross-
+// checked against real per-system downloads from
+// http://redump.org/datfile/<slug>/ (see AGENTS.md's "DAT snapshot
+// status") - that pass caught three wrong pack names (segacd/megacd/
+// megacdjp, neogeocd/neogeocdjp, atarijaguarcd), now corrected below.
+// internal/datdb's Stage re-verifies a staged file's own <header><name>
+// against the System value here before embedding it regardless, so a
+// future drift is still caught there, not silently mismatched at
+// runtime.
 var Dat = map[string]DatSource{
 	// Redump (disc-based)
 	"psx":           {"redump", "Sony - PlayStation"},
 	"saturn":        {"redump", "Sega - Saturn"},
 	"saturnjp":      {"redump", "Sega - Saturn"},
-	"segacd":        {"redump", "Sega - Mega-CD - Sega CD"},
-	"megacd":        {"redump", "Sega - Mega-CD - Sega CD"},
-	"megacdjp":      {"redump", "Sega - Mega-CD - Sega CD"},
+	"segacd":        {"redump", "Sega - Mega CD & Sega CD"},
+	"megacd":        {"redump", "Sega - Mega CD & Sega CD"},
+	"megacdjp":      {"redump", "Sega - Mega CD & Sega CD"},
 	"pcenginecd":    {"redump", "NEC - PC Engine CD & TurboGrafx CD"},
 	"tg-cd":         {"redump", "NEC - PC Engine CD & TurboGrafx CD"},
 	"dreamcast":     {"redump", "Sega - Dreamcast"},
 	"3do":           {"redump", "Panasonic - 3DO Interactive Multiplayer"},
-	"neogeocd":      {"redump", "SNK - NeoGeo CD"},
-	"neogeocdjp":    {"redump", "SNK - NeoGeo CD"},
+	"neogeocd":      {"redump", "SNK - Neo Geo CD"},
+	"neogeocdjp":    {"redump", "SNK - Neo Geo CD"},
 	"pcfx":          {"redump", "NEC - PC-FX & PC-FXGA"},
 	"amigacd32":     {"redump", "Commodore - Amiga CD32"},
 	"cdtv":          {"redump", "Commodore - Amiga CDTV"},
 	"cdimono1":      {"redump", "Philips - CD-i"},
-	"atarijaguarcd": {"redump", "Atari - Jaguar CD Interactive Multiplayer"},
+	"atarijaguarcd": {"redump", "Atari - Jaguar CD Interactive Multimedia System"},
 	"ps2":           {"redump", "Sony - PlayStation 2"},
 	"psp":           {"redump", "Sony - PlayStation Portable"},
 	"gc":            {"redump", "Nintendo - GameCube"},

@@ -10,7 +10,7 @@ import (
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
-// datTimestampSuffix matches a real pack filename's own dynamic
+// datTimestampSuffix matches a No-Intro pack filename's own dynamic
 // "<base> (<timestamp>).dat" suffix - group 1 is everything before it.
 // A plain glob ("<System> (*).dat") isn't precise enough here: `*` also
 // matches across a *different* trailing parenthetical group, e.g.
@@ -23,11 +23,22 @@ import (
 // appear earlier in the name as part of the base name itself.
 var datTimestampSuffix = regexp.MustCompile(`^(.+) \(\d{8}-\d{6}\)\.dat$`)
 
+// redumpSuffix matches a Redump "Datfile" download's own, differently
+// shaped dynamic suffix: "<base> - Datfile (<id>) (<date> <time>).dat",
+// e.g. "Sony - PlayStation - Datfile (10914) (2026-06-15 11-55-46).dat" -
+// confirmed against real per-system downloads from
+// http://redump.org/datfile/<slug>/ (see AGENTS.md's "DAT snapshot
+// status"). Redump's own filename never carries datTimestampSuffix's
+// digit8-dash-digit6 shape, and No-Intro's never carries a
+// " - Datfile (<id>)" segment, so the two patterns can't cross-match.
+var redumpSuffix = regexp.MustCompile(`^(.+) - Datfile \(\d+\) \(\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}\)\.dat$`)
+
 // findDatFiles returns every file under dir whose name resolves to
 // exactly system, either already timestamp-stripped ("<system>.dat") or
-// in a real pack's own dynamic form (matched via datTimestampSuffix).
-// More than one result means an unresolvable ambiguity - the caller
-// reports that rather than guessing.
+// in a real pack's own dynamic form (matched via datTimestampSuffix or
+// redumpSuffix - a provider's downloads only ever carry its own shape, so
+// trying both costs nothing). More than one result means an unresolvable
+// ambiguity - the caller reports that rather than guessing.
 func findDatFiles(dir, system string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -47,6 +58,10 @@ func findDatFiles(dir, system string) ([]string, error) {
 			continue
 		}
 		if m := datTimestampSuffix.FindStringSubmatch(name); m != nil && m[1] == system {
+			matches = append(matches, filepath.Join(dir, name))
+			continue
+		}
+		if m := redumpSuffix.FindStringSubmatch(name); m != nil && m[1] == system {
 			matches = append(matches, filepath.Join(dir, name))
 		}
 	}

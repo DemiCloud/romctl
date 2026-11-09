@@ -179,21 +179,26 @@ talk of migrating off redump.org). Writing scraper/login code against
 either is a maintenance liability that breaks silently on the next layout
 change, for a correctness feature, not a build dependency.
 
-Instead: the maintainer downloads whatever bulk pack each provider
-actually offers — No-Intro's Dat-o-Matic "Daily" aggregate turned out to
-be exactly this, a single zip with every system's DAT inside (confirmed
-against a real 2026-11-08 "No-Intro Love Pack (DAT)") — and unzips it
-as-is under `thirdparty/dats/no-intro/` and/or `thirdparty/dats/redump/`.
-No picking out or renaming individual files first: a real pack's
-filenames carry their own dynamic `"<pack name> (<timestamp>).dat"`
-suffix that changes release to release, and the same zip bundles hundreds
-of systems romctl doesn't track at all, so `make dats` (`go run
-./cmd/stage-dats`, thin wrapper over `internal/datdb.Stage`) is what
-matches each `systemdb.Dat` entry by pack name via glob (ignoring the
-timestamp), cross-checks the matched file's own `<header><name>` before
-trusting it, and stages only those into `internal/datdb/data/<provider>/`
-with the timestamp stripped — so `datdb.Load`'s own lookup can stay a
-plain exact match.
+Instead: the maintainer downloads whatever each provider actually offers
+and drops it, unzipped and unmodified, under `thirdparty/dats/no-intro/`
+and/or `thirdparty/dats/redump/`. The two providers don't offer the same
+shape of download: No-Intro's Dat-o-Matic "Daily" aggregate is a single
+zip with every system's DAT inside, each carrying its own dynamic
+`"<pack name> (<timestamp>).dat"` suffix (confirmed against a real
+2026-11-08 "No-Intro Love Pack (DAT)"); Redump has no bulk pack at all —
+each system is its own download from `http://redump.org/datfile/<slug>/`
+(the slug list is redump.org's own downloads page), unzipping to
+`"<pack name> - Datfile (<id>) (<date> <time>).dat"`, a differently-shaped
+suffix confirmed against real per-system downloads for every redump
+`systemdb.Dat` entry. No picking out or renaming individual files first
+either way: the same No-Intro zip bundles hundreds of systems romctl
+doesn't track at all, so `make dats` (`go run ./cmd/stage-dats`, thin
+wrapper over `internal/datdb.Stage`) is what matches each `systemdb.Dat`
+entry by pack name via glob (ignoring either provider's own timestamp
+shape - see `datTimestampSuffix`/`redumpSuffix`), cross-checks the
+matched file's own `<header><name>` before trusting it, and stages only
+those into `internal/datdb/data/<provider>/` with the suffix stripped —
+so `datdb.Load`'s own lookup can stay a plain exact match.
 
 No DAT snapshot is committed as of this writing —
 `internal/datdb/data/*/MANIFEST` are placeholders, same convention as
@@ -210,8 +215,13 @@ pack listing; a few systems publish more than one DAT variant for
 different dump container formats (N64 BigEndian/ByteSwapped, NES
 Headered/Headerless, Atari Lynx/Jaguar's several formats, etc.) — picked
 to match romctl's own target format where one exists, otherwise a
-best-effort guess noted inline in `dat.go`. The redump entries are still
-unverified against a real Redump download.
+best-effort guess noted inline in `dat.go`. The redump entries have now
+also been cross-checked against real per-system downloads, which caught
+three wrong pack names - `segacd`/`megacd`/`megacdjp` ("Sega - Mega-CD -
+Sega CD" → "Sega - Mega CD & Sega CD"), `neogeocd`/`neogeocdjp` ("SNK -
+NeoGeo CD" → "SNK - Neo Geo CD"), and `atarijaguarcd` ("Atari - Jaguar CD
+Interactive Multiplayer" → "Atari - Jaguar CD Interactive Multimedia
+System") - now corrected in `dat.go`.
 
 Two deliberate, lasting limitations, not TODOs:
 

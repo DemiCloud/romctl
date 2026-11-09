@@ -9,9 +9,11 @@ import (
 // committed yet - see internal/datdb's doc comment): a system with a real
 // systemdb.Dat mapping but nothing actually staged must come back as a
 // row to collect, not an immediate print, so callers can batch every
-// system's issue into one small table instead of a line each.
+// system's issue into one small table instead of a line each. Uses an
+// empty --dat-dir override (t.TempDir()) rather than "" so this doesn't
+// depend on whether this build happens to have psx's real DAT embedded.
 func TestLoadDatReportsUnstagedAsRow(t *testing.T) {
-	df, ok, row := loadDat("psx", "")
+	df, ok, row := loadDat("psx", t.TempDir())
 	if !ok {
 		t.Fatal("psx has a systemdb.Dat mapping, loadDat should report ok")
 	}

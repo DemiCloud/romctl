@@ -108,6 +108,30 @@ func TestStageDoesNotConfuseVariantFilesViaGlob(t *testing.T) {
 	}
 }
 
+func TestStageMatchesRedumpDownloadFilename(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	// A real per-system download from http://redump.org/datfile/<slug>/
+	// carries a differently-shaped dynamic suffix than No-Intro's own
+	// packs - " - Datfile (<id>) (<date> <time>).dat" - confirmed against
+	// a real "psx" download. redumpSuffix must recognize this shape too.
+	writeStageFixture(t, src, "redump", "Sony - PlayStation - Datfile (10914) (2026-06-15 11-55-46).dat", "Sony - PlayStation")
+
+	results, err := Stage(src, dst)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	r, ok := resultFor(results, "psx")
+	if !ok {
+		t.Fatal("no result for psx")
+	}
+	if r.Status != "staged" {
+		t.Fatalf("psx status = %q, detail %q, want staged", r.Status, r.Detail)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "redump", "Sony - PlayStation.dat")); err != nil {
+		t.Fatalf("staged file not found at the stable (suffix-stripped) path: %v", err)
+	}
+}
+
 func TestStageMissingIsNotAnError(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	results, err := Stage(src, dst)
