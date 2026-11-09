@@ -93,7 +93,7 @@ func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, sc
 		{"snes", func() (bool, error) { return true, SNES(lib, runner, systems) }},
 		{"ps3", func() (bool, error) { return PS3(lib, runner, systems, scheme) }},
 		{"m3u", func() (bool, error) { return true, M3U(lib, runner, systems) }},
-		{"rename", func() (bool, error) { return true, Rename(lib, runner, systems, scheme) }},
+		{"rename", func() (bool, error) { return true, Rename(lib, runner, systems, scheme, false, "", false) }},
 		{"saves", func() (bool, error) { return Saves(lib, runner, systems, savesDest) }},
 	}
 }

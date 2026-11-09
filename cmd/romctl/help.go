@@ -34,6 +34,7 @@ const (
 	flagDatDir        = "      --dat-dir DIR       use DAT files from DIR instead of the embedded snapshot"
 	flagVerifyCHD     = "      --verify-chd        extract and hash-verify .chd files against the DAT too (needs chdman; slower)"
 	flagLimit         = "      --limit N           show at most N matches per system in the results table (default: unlimited)"
+	flagVerifyDat     = "      --verify-dat        hash-verify against a No-Intro/Redump DAT first; use its name when confirmed (slower)"
 	flagHelp          = "  -h, --help              show this help"
 	flagVersion       = "      --version           show version"
 )
@@ -69,12 +70,12 @@ var commandTable = map[string]cmdInfo{
 	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagVerifyCHD, flagFormat}},
-	"identify":   {"rename files to their DAT-verified canonical name", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDatDir, flagVerifyCHD, flagLimit, flagFormat}},
+	"identify":   {"list files hash-confirmed against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagVerifyCHD, flagLimit, flagFormat}},
 	"system":     {"system information (see 'system list', 'system games')", "", nil},
 	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
 	"games":      {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
 	"fix":        {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDest, flagFormat}},
-	"rename":     {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
+	"rename":     {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagVerifyDat, flagDatDir, flagVerifyCHD, flagFormat}},
 	"unpack":     {"extract single-file archives (cartridge/N64/SNES/GC/Wii/Xbox)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"chd":        {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
 	"m3u":        {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},

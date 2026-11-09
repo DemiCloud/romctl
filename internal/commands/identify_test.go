@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/library"
 )
@@ -66,46 +65,38 @@ func newTestLib(t *testing.T, files map[string]string) (*library.Library, string
 	return library.Open(root), sysDir
 }
 
-func TestIdentifyRenamesMatchedFileThroughScheme(t *testing.T) {
-	content := "gb-rom-bytes"
-	lib, sysDir := newTestLib(t, map[string]string{"scrambled_name.gb": content})
+// TestIdentifyListsConfirmedMatchWithoutRenaming is identify's core
+// contract: it reports a hash-confirmed match - file, game, hash - but
+// never touches the filesystem. Renaming a confirmed match is `rename
+// --verify-dat`'s job (see rename_test.go), not identify's.
+func TestIdentifyListsConfirmedMatchWithoutRenaming(t *testing.T) {
+	content := []byte("gb-rom-bytes")
+	lib, sysDir := newTestLib(t, map[string]string{"scrambled_name.gb": string(content)})
 	datDir := t.TempDir()
-	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
+	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", content, "")
 
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeNoTag, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Error("Identify reported failure")
-	}
+	out := captureStdout(t, func() {
+		ok, err := Identify(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Identify reported failure")
+		}
+	})
 
-	if _, err := os.Stat(filepath.Join(sysDir, "scrambled_name.gb")); err == nil {
-		t.Error("original scrambled filename should no longer exist")
+	if _, err := os.Stat(filepath.Join(sysDir, "scrambled_name.gb")); err != nil {
+		t.Errorf("identify must never rename anything, original file missing: %v", err)
 	}
-	// SchemeNoTag runs the DAT name through CleanName, which strips both
-	// "(Japan)" and "(Rev 1)" (neither is "(Disc N)").
-	want := filepath.Join(sysDir, "Pocket Monsters.gb")
-	if _, err := os.Stat(want); err != nil {
-		t.Errorf("expected renamed file at %s: %v", want, err)
+	if exists(filepath.Join(sysDir, "Pocket Monsters.gb")) || exists(filepath.Join(sysDir, "Pocket Monsters (Japan) (Rev 1).gb")) {
+		t.Error("identify must never create a renamed file")
 	}
-}
-
-func TestIdentifySchemeKeepPreservesDatTags(t *testing.T) {
-	content := "gb-rom-bytes-2"
-	lib, sysDir := newTestLib(t, map[string]string{"x.gb": content})
-	datDir := t.TempDir()
-	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
-
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(out, "scrambled_name.gb") || !strings.Contains(out, "Pocket Monsters (Japan) (Rev 1)") {
+		t.Errorf("expected the table to list the original filename and the raw DAT game name, got:\n%s", out)
 	}
-
-	want := filepath.Join(sysDir, "Pocket Monsters (Japan) (Rev 1).gb")
-	if _, err := os.Stat(want); err != nil {
-		t.Errorf("expected renamed file at %s (SchemeKeep leaves the DAT name verbatim): %v", want, err)
+	wantHash := strings.ToUpper(fmt.Sprintf("%08x", crc32.ChecksumIEEE(content)))
+	if !strings.Contains(out, wantHash) {
+		t.Errorf("expected the table to include the file's CRC32 %s, got:\n%s", wantHash, out)
 	}
 }
 
@@ -114,51 +105,26 @@ func TestIdentifyLeavesUnmatchedFileAlone(t *testing.T) {
 	datDir := t.TempDir()
 	writeIdentifyDat(t, datDir, "Some Known Game", []byte("different-content-entirely"), "")
 
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Error("Identify reported failure")
-	}
+	out := captureStdout(t, func() {
+		ok, err := Identify(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Identify reported failure")
+		}
+	})
 	if _, err := os.Stat(filepath.Join(sysDir, "unrelated.gb")); err != nil {
 		t.Errorf("unmatched file should be left exactly as it was: %v", err)
 	}
-}
-
-func TestIdentifyCollisionSkipped(t *testing.T) {
-	content := "gb-rom-bytes-3"
-	// Both the messy original and a file already sitting at the target
-	// name exist - must not overwrite the latter.
-	lib, sysDir := newTestLib(t, map[string]string{
-		"messy_name.gb": content,
-		"Clean Game.gb": "pre-existing-different-content",
-	})
-	datDir := t.TempDir()
-	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
-
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	// messy_name.gb must still exist (rename was skipped, not performed).
-	if _, err := os.Stat(filepath.Join(sysDir, "messy_name.gb")); err != nil {
-		t.Errorf("source file should remain when the target collides: %v", err)
-	}
-	got, err := os.ReadFile(filepath.Join(sysDir, "Clean Game.gb"))
-	if err != nil {
-		t.Fatalf("pre-existing target file should still exist: %v", err)
-	}
-	if string(got) != "pre-existing-different-content" {
-		t.Error("pre-existing target file must not be overwritten")
+	if strings.Contains(out, "unrelated.gb") {
+		t.Errorf("an unmatched file must not appear in the results table, got:\n%s", out)
 	}
 }
 
 func TestIdentifySkipsMultiROMMatch(t *testing.T) {
 	contentA, contentB := "chip-a-bytes", "chip-b-bytes"
-	lib, sysDir := newTestLib(t, map[string]string{
+	lib, _ := newTestLib(t, map[string]string{
 		"chip_a.gb": contentA,
 		"chip_b.gb": contentB,
 	})
@@ -179,34 +145,14 @@ func TestIdentifySkipsMultiROMMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, name := range []string{"chip_a.gb", "chip_b.gb"} {
-		if _, err := os.Stat(filepath.Join(sysDir, name)); err != nil {
-			t.Errorf("a multi-ROM match must leave every file alone, %s missing: %v", name, err)
+	out := captureStdout(t, func() {
+		if _, err := Identify(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain, 0); err != nil {
+			t.Fatal(err)
 		}
-	}
-}
+	})
 
-func TestIdentifyDryRunRenamesNothing(t *testing.T) {
-	content := "gb-rom-bytes-4"
-	lib, sysDir := newTestLib(t, map[string]string{"scrambled.gb": content})
-	datDir := t.TempDir()
-	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
-
-	runner := &actions.Runner{Format: cliutil.FormatPlain, DryRun: true}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(sysDir, "scrambled.gb")); err != nil {
-		t.Errorf("dry-run must not rename anything: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(sysDir, "Clean Game.gb")); err == nil {
-		t.Error("dry-run must not create the renamed file")
+	if strings.Contains(out, "Two Chip Game") {
+		t.Errorf("a multi-ROM match spanning more than one file must not be listed, got:\n%s", out)
 	}
 }
 
@@ -216,8 +162,7 @@ func TestIdentifySkipsArcade(t *testing.T) {
 		t.Fatal(err)
 	}
 	lib := library.Open(root)
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"arcade"}, "", false, actions.SchemeKeep, 0)
+	ok, err := Identify(lib, []string{"arcade"}, "", false, false, cliutil.FormatPlain, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,38 +171,11 @@ func TestIdentifySkipsArcade(t *testing.T) {
 	}
 }
 
-// TestIdentifyPrintsResultsTable guards the human-readable summary every
-// non-structured run should get: a table naming the matched file, the
-// game it was identified as, and the hash that proved it - not just the
-// final "N renamed" one-liner.
-func TestIdentifyPrintsResultsTable(t *testing.T) {
-	content := []byte("gb-rom-bytes-table")
-	lib, _ := newTestLib(t, map[string]string{"messy.gb": string(content)})
-	datDir := t.TempDir()
-	writeIdentifyDat(t, datDir, "Clean Game", content, "")
-
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	out := captureStdout(t, func() {
-		if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	if !strings.Contains(out, "messy.gb") || !strings.Contains(out, "Clean Game") {
-		t.Errorf("expected the results table to list the matched file and game, got:\n%s", out)
-	}
-	wantHash := strings.ToUpper(fmt.Sprintf("%08x", crc32.ChecksumIEEE(content)))
-	if !strings.Contains(out, wantHash) {
-		t.Errorf("expected the results table to include the file's CRC32 %s, got:\n%s", wantHash, out)
-	}
-}
-
-// TestIdentifyLimitTruncatesPerSystem guards --limit: a system with more
-// matches than the limit should still rename everything (the limit only
-// caps the printed table), and note how many more rows it held back.
+// TestIdentifyLimitTruncatesPerSystem guards --limit: it caps the table
+// at N rows per system and notes how many more that system had.
 func TestIdentifyLimitTruncatesPerSystem(t *testing.T) {
 	c1, c2, c3 := []byte("limit-content-one"), []byte("limit-content-two"), []byte("limit-content-three")
-	lib, sysDir := newTestLib(t, map[string]string{
+	lib, _ := newTestLib(t, map[string]string{
 		"messy1.gb": string(c1),
 		"messy2.gb": string(c2),
 		"messy3.gb": string(c3),
@@ -266,9 +184,8 @@ func TestIdentifyLimitTruncatesPerSystem(t *testing.T) {
 	extra := gbGameXML("Game Two", c2) + gbGameXML("Game Three", c3)
 	writeIdentifyDat(t, datDir, "Game One", c1, extra)
 
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
 	out := captureStdout(t, func() {
-		if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 2); err != nil {
+		if _, err := Identify(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain, 2); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -276,18 +193,13 @@ func TestIdentifyLimitTruncatesPerSystem(t *testing.T) {
 	if !strings.Contains(out, "1 more match(es) not shown (--limit 2)") {
 		t.Errorf("expected a truncation note for the 3rd match, got:\n%s", out)
 	}
-	for _, want := range []string{"Game One.gb", "Game Two.gb", "Game Three.gb"} {
-		if !exists(filepath.Join(sysDir, want)) {
-			t.Errorf("--limit must not stop a match from actually being renamed, missing %s", want)
-		}
-	}
 }
 
 // TestIdentifyNotesSkippedCHDWithoutVerifyCHD guards the "no output"
 // surprise a CHD-converted library used to hit: identify silently skips
 // every .chd by default (see the package doc comment), so a run over a
-// library that's already all-CHD legitimately renames nothing - but it
-// should say why instead of looking exactly like a run that found no
+// library that's already all-CHD legitimately identifies nothing - but
+// it should say why instead of looking exactly like a run that found no
 // matches at all.
 func TestIdentifyNotesSkippedCHDWithoutVerifyCHD(t *testing.T) {
 	lib, sysDir := newTestLib(t, nil)
@@ -309,9 +221,8 @@ func TestIdentifyNotesSkippedCHDWithoutVerifyCHD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &actions.Runner{Format: cliutil.FormatPlain}
 	out := captureStdout(t, func() {
-		ok, err := Identify(lib, runner, []string{"psx"}, datDir, false, actions.SchemeKeep, 0)
+		ok, err := Identify(lib, []string{"psx"}, datDir, false, false, cliutil.FormatPlain, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -10,15 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/datdb"
-	"github.com/demicloud/romctl/internal/gamelist"
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
-// identifyRow is one hash-confirmed rename's shape for the human-readable
+// identifyRow is one hash-confirmed match's shape for the human-readable
 // table Identify prints when done - System first (so a multi-system run
 // still reads as "one table per system" once sorted/grouped), same
 // cliutil.RenderList convention as collectionRow. Hash is the matched
@@ -35,39 +33,38 @@ type identifyRow struct {
 
 // Identify hash-matches every given system's files against its embedded
 // (or --dat-dir-overridden) No-Intro/Redump DAT - the same matching
-// collection.Collection already does - and renames a confirmed match to
-// its DAT game name, run through ApplyScheme (the same --naming logic
-// `rename` already uses), instead of leaving the file under whatever
-// name it already had.
+// collection.Collection already does - and lists every confirmed match:
+// which local file is which DAT game, and the hash that proved it.
+// Read-only, like collection: it never renames anything - renaming a
+// confirmed match to its DAT name is `rename --verify-dat`'s job, not
+// this command's (identify answers "what is this file," rename answers
+// "what should it be called").
 //
-// Unlike `rename`, this is additive, not a reformat of every file: a
-// file identify can't confirm by hash is left completely untouched,
-// whatever its current name - run `rename` separately for generic tag
-// cleanup on everything identify didn't verify. Only a DAT Game with
-// exactly one ROM that unambiguously matches exactly one local file
-// qualifies; a multi-ROM game (its match spans more than one file) or a
-// file whose hash matches more than one different Game (an actual
-// byte-identical ROM shared by two DAT entries) is left alone rather
-// than guessed at. ClassArcade systems are skipped entirely, same as
-// `rename` already does: arcade filenames are emulator-resolved set
-// names. A `.chd` is never hashed or renamed by default, for the same
-// reason Collection reports it "unverifiable" - no CHD metadata hash
-// lines up with a Redump DAT entry; verifyCHD (--verify-chd) opts into
-// extracting and hashing it instead, same cost/caveats as Collection's
-// own verifyCHD - see its doc comment.
+// Only a DAT Game with exactly one ROM that unambiguously matches exactly
+// one local file qualifies; a multi-ROM game (its match spans more than
+// one file) or a file whose hash matches more than one different Game
+// (an actual byte-identical ROM shared by two DAT entries) is left out
+// rather than guessed at. ClassArcade systems are skipped entirely:
+// arcade filenames are emulator-resolved set names. A `.chd` is never
+// hashed by default, for the same reason Collection reports it
+// "unverifiable" - no CHD metadata hash lines up with a Redump DAT entry;
+// verifyCHD (--verify-chd) opts into extracting and hashing it instead,
+// same cost/caveats as Collection's own verifyCHD - see its doc comment.
 //
-// This is its own command, not a `rename` flag, for the same reason
-// `dupes`/`verify` are their own commands rather than `check` flags:
-// hashing an entire library is occasionally expensive enough that
-// folding it into an otherwise-instant command makes a long run
-// indistinguishable from a hang. Hashing runs the same way
+// This is its own command, not folded into `collection`'s own output,
+// because it answers a different question: collection is DAT-centric
+// (every known game, have or missing), identify is filesystem-centric
+// (every actual local file, identified or not) - and hashing an entire
+// library is occasionally expensive enough that it still deserves the
+// same "own command, not a flag on something instant" treatment `dupes`/
+// `verify` already got, now that it no longer piggybacks on a mutating
+// command's own cost budget either. Hashing runs the same way
 // collection/dupes/verify already do: a live per-worker spinner in
 // verbose mode on a real terminal, one plain "[i/total] hash sys/file"
 // line per file in verbose mode otherwise, or an "identify: done/total"
 // counter by default.
-func Identify(lib *library.Library, runner *actions.Runner, systems []string, datDir string, verifyCHD bool, scheme actions.Scheme, limit int) (bool, error) {
+func Identify(lib *library.Library, systems []string, datDir string, verifyCHD, verbose bool, format cliutil.Format, limit int) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("identify", runner.Format)
 
 	var chdmanPath string
 	if verifyCHD {
@@ -118,10 +115,9 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	}
 	printDatLoadIssues("identify", datIssues)
 
-	verbose, format := runner.Verbose, runner.Format
 	live := verbose && cliutil.CanAnimate(format)
-	var renamed, failed, skippedCHD atomic.Int64
 	var rows []identifyRow
+	var skippedCHD atomic.Int64
 	doneSoFar := 0
 	process := func(tick func()) {
 		for _, job := range jobs {
@@ -139,7 +135,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 					}
 					hashes, err := hashDiscCHD(chdmanPath, filepath.Join(sysDir, name), job.class)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "identify: %s/%s: extraction failed, leaving untouched: %v\n", job.sys, name, err)
+						fmt.Fprintf(os.Stderr, "identify: %s/%s: extraction failed: %v\n", job.sys, name, err)
 						return true
 					}
 					mu.Lock()
@@ -183,8 +179,8 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 				// A multi-track --verify-chd match repeats the same
 				// filename once per matched track - dedup before
 				// judging "how many files does this span": one unique
-				// name is still a legitimate single-file rename target,
-				// unlike a genuine multi-ROM match across separate files.
+				// name is still a legitimate single-file match, unlike a
+				// genuine multi-ROM match across separate files.
 				names := dedupStrings(m.Matched)
 				if len(names) != 1 {
 					continue
@@ -201,33 +197,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 				if ambiguous[name] {
 					continue
 				}
-				ext := filepath.Ext(name)
-				clean := actions.ApplyScheme(gameName, scheme)
-				if clean+ext == name {
-					continue
-				}
-				src := filepath.Join(sysDir, name)
-				dst := filepath.Join(sysDir, clean+ext)
-
-				if same, _ := sameExists(dst, src); exists(dst) && !same {
-					log.Errf("collision, skipped: %s/%s -> %s%s", job.sys, name, clean, ext)
-					continue
-				}
-				row := identifyRow{System: job.sys, File: name, Game: gameName, Hash: strings.ToUpper(nameToCRC[name])}
-				if !runner.Act("identify %s/%s -> %s%s", job.sys, name, clean, ext) {
-					rows = append(rows, row)
-					continue
-				}
-				if err := actions.RenamePath(src, dst); err != nil {
-					log.Errf("rename failed: %s/%s: %v", job.sys, name, err)
-					failed.Add(1)
-					continue
-				}
-				if err := gamelist.Rename(lib.Root, job.sys, name, clean+ext); err != nil {
-					log.Errf("gamelist update failed: %s/%s: %v", job.sys, name, err)
-				}
-				renamed.Add(1)
-				rows = append(rows, row)
+				rows = append(rows, identifyRow{System: job.sys, File: name, Game: gameName, Hash: strings.ToUpper(nameToCRC[name])})
 			}
 		}
 	}
@@ -238,38 +208,29 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		cliutil.Progress(format, false, false, "identify", total, process)
 	}
 
-	if runner.Format.Structured() {
-		runner.SetCount("renamed", renamed.Load())
-		runner.SetCount("failed", failed.Load())
-		runner.SetCount("chd_skipped", skippedCHD.Load())
-		return len(datIssues) == 0 && failed.Load() == 0, nil
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].System != rows[j].System {
+			return rows[i].System < rows[j].System
+		}
+		return rows[i].File < rows[j].File
+	})
+	shown, moreSystems, moreCounts := limitPerSystem(rows, limit)
+	if format.Structured() || len(shown) > 0 {
+		if err := cliutil.RenderList(os.Stdout, format, shown); err != nil {
+			return false, err
+		}
 	}
-
-	if len(rows) > 0 {
-		sort.SliceStable(rows, func(i, j int) bool {
-			if rows[i].System != rows[j].System {
-				return rows[i].System < rows[j].System
-			}
-			return rows[i].File < rows[j].File
-		})
-		shown, moreSystems, moreCounts := limitPerSystem(rows, limit)
-		cliutil.RenderList(os.Stdout, runner.Format, shown)
+	if !format.Structured() {
 		for _, sys := range moreSystems {
 			fmt.Printf("identify: %s: %d more match(es) not shown (--limit %d)\n", sys, moreCounts[sys], limit)
 		}
+		if n := skippedCHD.Load(); n > 0 {
+			fmt.Printf("identify: %d .chd file(s) not checked (pass --verify-chd to include them)\n", n)
+		}
+		color, reset := cliutil.StatusColor(format, len(datIssues) > 0)
+		fmt.Printf("%sidentify: %d identified (%d checked) in %s%s\n", color, len(rows), total, time.Since(start).Round(time.Second), reset)
 	}
-	if n := skippedCHD.Load(); n > 0 {
-		fmt.Printf("identify: %d .chd file(s) not checked (pass --verify-chd to include them)\n", n)
-	}
-
-	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	line := fmt.Sprintf("%sidentify: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
-	if runner.Quiet {
-		runner.Summarize(line)
-	} else {
-		fmt.Print(line)
-	}
-	return len(datIssues) == 0 && failed.Load() == 0, nil
+	return len(datIssues) == 0, nil
 }
 
 // limitPerSystem caps rows (already sorted by System) at limit entries per
