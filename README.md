@@ -216,6 +216,7 @@ falls back to disk when it isn't safe to use.
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
 | `collection` | Compare games against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT, reporting have/missing/unverifiable per game. Read-only. See [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat). |
+| `identify` | Rename a hash-confirmed file to its DAT game name, formatted per `--naming`. Leaves anything it can't confirm untouched. See [Identify: rename to a DAT-verified name](#identify-rename-to-a-dat-verified-name). |
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
@@ -375,6 +376,33 @@ they always get a real have/missing verdict.
 Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game
 (1G1R-style) the way a full ROM manager would.
+
+### Identify: rename to a DAT-verified name
+
+`identify [SYSTEM...|all]` goes one step further than `collection`: for a
+file it can hash-confirm against the DAT, it renames it to that DAT game's
+own name, run through whichever `--naming` scheme is configured (`notag`/
+`keep`/`no-intro`/`redump` - see [Naming](#naming)), the same
+`ApplyScheme` logic `rename` already uses. A messy, inconsistently-named
+library ends up with the DAT's own, verified title instead of whatever its
+dump happened to be called - with region/revision tags then formatted
+exactly the way you've already configured `rename` to format them.
+
+It's additive, not a blanket reformat: a file `identify` can't confirm by
+hash is left completely untouched, whatever its current name - a DAT
+`Game` with more than one `ROM` whose match spans more than one file, a
+hash shared by two different `Game`s, an arcade system, or a `.chd` (same
+"unverifiable" reasoning as `collection`) are all skipped. Run `rename`
+separately afterward for generic tag cleanup on anything `identify`
+didn't touch. Same collision safety as every other rename in romctl: if
+the target name is already taken by a different file, the rename is
+skipped and logged, never overwritten. Takes the same `--dat-dir`
+override as `collection`.
+
+It's its own command rather than a `rename` flag for the same reason
+`dupes`/`verify` are their own commands: hashing a whole library is
+occasionally expensive enough that folding it into `rename` - normally
+instant - would make a long run indistinguishable from a hang.
 
 ### Stray save files
 
@@ -875,9 +903,11 @@ Notes:
 
 - **Full ROM-manager duties.** `collection` (see
   [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat))
-  hash-matches a library against embedded No-Intro/Redump DAT snapshots, but
-  it doesn't 1G1R-group, rename files to DAT-canonical names, or otherwise
-  manage a collection. Use a full ROM manager such as
+  hash-matches a library against embedded No-Intro/Redump DAT snapshots, and
+  `identify` (see [Identify: rename to a DAT-verified name](#identify-rename-to-a-dat-verified-name))
+  renames a confirmed match to its DAT name - but neither 1G1R-groups,
+  dedupes across regions, or otherwise actively manages a collection the
+  way a full ROM manager would. Use a full ROM manager such as
   [Igir](https://igir.io/) for that.
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.

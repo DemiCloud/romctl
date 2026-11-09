@@ -45,7 +45,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "dupes", "verify", "collection", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
+	"check", "bios", "dupes", "verify", "collection", "identify", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "tools",
 }
 
@@ -58,7 +58,7 @@ var commandGroups = []struct {
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Other:", []string{"bios", "dupes", "verify", "collection", "system", "scrape", "clean", "tools"}},
+	{"Other:", []string{"bios", "dupes", "verify", "collection", "identify", "system", "scrape", "clean", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
@@ -67,6 +67,7 @@ var commandTable = map[string]cmdInfo{
 	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagFormat}},
+	"identify":   {"rename files to their DAT-verified canonical name", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDatDir, flagFormat}},
 	"system":     {"system information (see 'system list', 'system games')", "", nil},
 	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
 	"games":      {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},

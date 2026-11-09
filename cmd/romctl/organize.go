@@ -22,6 +22,23 @@ func newRenameCmd() *cobra.Command {
 	return cmd
 }
 
+func newIdentifyCmd() *cobra.Command {
+	cmd := newMutatingCmd("identify [SYSTEM...|all]", "rename files to their DAT-verified canonical name")
+	cmd.Flags().String("naming", "", "")
+	cmd.Flags().String("dat-dir", "", "")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		scheme, err := resolveScheme(cmd)
+		if err != nil {
+			return err
+		}
+		datDir, _ := cmd.Flags().GetString("dat-dir")
+		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
+			return commands.Identify(appCtx.lib, runner, systems, datDir, scheme)
+		})
+	}
+	return cmd
+}
+
 func newRelocateCmd() *cobra.Command {
 	cmd := newHiddenStepCmd("relocate [SYSTEM...|all]", "move a misfiled cartridge ROM into its correct system directory")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
