@@ -16,6 +16,7 @@ import (
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/datdb"
 	"github.com/demicloud/romctl/internal/library"
+	"github.com/demicloud/romctl/internal/systemdb"
 )
 
 // collectionRow is one known game's shape for every output form, same
@@ -39,17 +40,24 @@ type collectionRow struct {
 // stderr instead of failing the whole run, so asking for "all" still
 // reports every system that does have coverage.
 //
-// CHD-converted files are reported as "unverifiable", not matched or
-// missing: no CHD metadata stores a hash that lines up with a Redump DAT
-// entry (chdman verify only checks a CHD against itself), and
-// reconstructing one by re-extracting every CHD back to raw tracks was
-// ruled out as too slow and not even guaranteed byte-exact for multi-track
-// CDs. This only affects disc-based (Redump) systems; cartridge systems
-// (No-Intro) are never CHD-converted, so they always get a real have/
-// missing verdict. An archived (.zip/.7z/.rar) ROM is hashed by streaming
-// straight through the archive reader (its sole entry - a multi-file
-// archive is skipped, same as hashable callers elsewhere expect one ROM
-// per archive), no extraction to disk needed.
+// CHD-converted files report as "unverifiable" by default: no CHD
+// metadata stores a hash that lines up with a Redump DAT entry (chdman
+// verify only checks a CHD against itself). Pass verifyCHD (--verify-chd)
+// to get a real verdict instead, at real cost: it extracts every .chd on
+// a CD/DVD/UMD-class system via chdman (hashDiscCHD) and hashes the
+// result - roughly what a full `verify` pass already costs, plus it's a
+// new runtime dependency on chdman neither Collection nor Identify
+// otherwise has. A Redump DAT's own .cue/.ccd/.sub/.toc sidecar entries
+// are ignored for this path (see stripSidecarROMs): chdman's regenerated
+// cue sheet can't byte-match Redump's distributed one even with perfect
+// track data, so a Game counts as matched once every actual binary track
+// is found. This only ever affects disc-based (Redump) systems;
+// cartridge systems (No-Intro) are never CHD-converted, so they always
+// get a real have/missing verdict regardless of this flag. An archived
+// (.zip/.7z/.rar) ROM is hashed by streaming straight through the archive
+// reader (its sole entry - a multi-file archive is skipped, same as
+// hashable callers elsewhere expect one ROM per archive), no extraction
+// to disk needed.
 //
 // No parent/clone (1G1R) grouping: every DAT entry, including every
 // region/revision/translation variant, is its own row. A future --group
@@ -61,9 +69,17 @@ type collectionRow struct {
 // "[i/total] hash sys/file" line per file in verbose mode otherwise, or a
 // "collection: done/total" counter by default - across a worker pool
 // either way.
-func Collection(lib *library.Library, systems []string, datDir string, verbose bool, format cliutil.Format) (bool, error) {
+func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose bool, format cliutil.Format) (bool, error) {
 	colors := cliutil.ColorsFor(format)
 	failed := false
+
+	var chdmanPath string
+	if verifyCHD {
+		var err error
+		if chdmanPath, err = resolveCHDManIfNeeded(systems); err != nil {
+			return false, err
+		}
+	}
 
 	type sysJob struct {
 		sys   string
@@ -81,6 +97,9 @@ func Collection(lib *library.Library, systems []string, datDir string, verbose b
 			fmt.Fprintf(os.Stderr, "collection: %s: %v\n", sys, err)
 			failed = true
 			continue
+		}
+		if verifyCHD && isDiscClass(systemdb.ClassOf(sys)) {
+			df = stripSidecarROMs(df)
 		}
 		entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
 		if err != nil {
@@ -103,6 +122,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verbose b
 	process := func(tick func()) {
 		for _, job := range jobs {
 			sysDir := filepath.Join(lib.Roms, job.sys)
+			class := systemdb.ClassOf(job.sys)
 			var mu sync.Mutex
 			byCRC, byMD5, bySHA1 := map[string]string{}, map[string]string{}, map[string]string{}
 			var unverifiable []string
@@ -111,6 +131,18 @@ func Collection(lib *library.Library, systems []string, datDir string, verbose b
 				defer tick()
 				path := filepath.Join(sysDir, name)
 				if strings.ToLower(filepath.Ext(name)) == ".chd" {
+					if verifyCHD && isDiscClass(class) {
+						hashes, err := hashDiscCHD(chdmanPath, path, class)
+						if err == nil {
+							mu.Lock()
+							for _, h := range hashes {
+								byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+							}
+							mu.Unlock()
+							return true
+						}
+						fmt.Fprintf(os.Stderr, "collection: %s/%s: extraction failed, reporting unverifiable: %v\n", job.sys, name, err)
+					}
 					mu.Lock()
 					unverifiable = append(unverifiable, name)
 					mu.Unlock()
@@ -170,9 +202,25 @@ func Collection(lib *library.Library, systems []string, datDir string, verbose b
 func collectionRowFor(sys string, m datdb.MatchResult, colors cliutil.Colors) collectionRow {
 	status, matched := "missing", "-"
 	if m.Have {
-		status, matched = "have", strings.Join(m.Matched, ", ")
+		status, matched = "have", strings.Join(dedupStrings(m.Matched), ", ")
 	}
 	return collectionRow{System: sys, Game: m.Game, Status: statusColor(status, colors), Matched: matched}
+}
+
+// dedupStrings drops repeats while keeping first-seen order - a
+// multi-track --verify-chd match names the same .chd file once per
+// matched track, which should only show up once in the Matched display.
+func dedupStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 func statusColor(status string, colors cliutil.Colors) string {

@@ -97,3 +97,30 @@ func Classify(path string) (Kind, error) {
 	}
 	return KindCD, nil
 }
+
+// LogicalSize returns a v5 CHD's logical (uncompressed) byte count,
+// straight out of its header - used to size a scratch-space request
+// before extracting the file (see commands.hashDiscCHD). Errors for
+// anything Classify would call KindBad or an old (non-v5) version; a
+// caller only ever calls this after Classify has already confirmed the
+// file is a real, current-version CHD.
+func LogicalSize(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	header := make([]byte, 124)
+	if _, err := f.ReadAt(header, 0); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	if !bytes.Equal(header[0:8], magic) {
+		return 0, fmt.Errorf("%s: not a CHD", path)
+	}
+	version := binary.BigEndian.Uint32(header[12:16])
+	if version != 5 {
+		return 0, fmt.Errorf("%s: CHD version %d, want 5", path, version)
+	}
+	return int64(binary.BigEndian.Uint64(header[32:40])), nil
+}

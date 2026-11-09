@@ -61,7 +61,7 @@ func TestCollection(t *testing.T) {
 
 	lib := library.Open(root)
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"gb"}, datDir, false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestCollectionUnknownSystemSkipped(t *testing.T) {
 	lib := library.Open(root)
 
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"arcade"}, "", false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"arcade"}, "", false, false, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}

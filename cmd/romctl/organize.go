@@ -26,14 +26,16 @@ func newIdentifyCmd() *cobra.Command {
 	cmd := newMutatingCmd("identify [SYSTEM...|all]", "rename files to their DAT-verified canonical name")
 	cmd.Flags().String("naming", "", "")
 	cmd.Flags().String("dat-dir", "", "")
+	cmd.Flags().Bool("verify-chd", false, "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
 		if err != nil {
 			return err
 		}
 		datDir, _ := cmd.Flags().GetString("dat-dir")
+		verifyCHD, _ := cmd.Flags().GetBool("verify-chd")
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
-			return commands.Identify(appCtx.lib, runner, systems, datDir, scheme)
+			return commands.Identify(appCtx.lib, runner, systems, datDir, verifyCHD, scheme)
 		})
 	}
 	return cmd

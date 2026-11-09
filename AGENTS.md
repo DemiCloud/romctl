@@ -28,7 +28,8 @@ Key `internal/` packages:
 | `actions` | Dry-run/apply framework (`Runner.Act`), `retire`, cross-platform case-only rename, title-cleaning (`CleanName`). |
 | `library`, `systemdb`, `config` | Library root resolution, the system/class/BIOS tables (plus `SkyscraperPlatform`, a system→Skyscraper-platform-name map built from Skyscraper's real `--help` output, not guessed - some niche/regional systems fall back to the closest real platform, noted inline), the TOML config file parser (`[sync]`/`[scrape]` tables; `github.com/BurntSushi/toml`). |
 | `sync` | rsync/SSH mirroring (`cmd/romctl/sync.go`'s `RunE` is a thin wrapper). Device path auto-discovery: unless `[sync] path` overrides it, `sync` reads RetroDECK's own `retrodeck.json` (`paths.rd_home_path`) over SSH, so it's correct whether the install is on internal storage or an SD card with no config needed. `[sync] user` defaults to `deck`. Opens one multiplexed SSH connection (`sshMux`, `ControlMaster`/`ControlPath`) up front, reused by the `retrodeck.json` lookup and every target's rsync, so a password-auth user is prompted once per run instead of once per connection; `sshMux`'s zero value is inactive, so a failure to establish it is a silent, harmless fallback to one prompt per connection. |
-| `formats/chd`, `formats/iso9660`, `formats/xiso`, `formats/n64`, `formats/snes`, `formats/cso` | Pure-Go byte-level format detection, plus the ISO9660 writer (replaces `makeps3iso`) and CSO decompressor (replaces `maxcso`). |
+| `formats/chd`, `formats/iso9660`, `formats/xiso`, `formats/n64`, `formats/snes`, `formats/cso` | Pure-Go byte-level format detection, plus the ISO9660 writer (replaces `makeps3iso`) and CSO decompressor (replaces `maxcso`). `formats/chd` also exposes `LogicalSize` (the v5 header's uncompressed byte count), used to size a scratch-space request before `--verify-chd` extraction. |
+| `formats/cuesheet` | Parses the one specific cue-sheet shape `chdman extractcd` generates (single `FILE` line, `TRACK`/`INDEX 01` in MM:SS:FF) into per-track byte ranges - not a general-purpose cue parser, just enough for `--verify-chd`'s own extraction output. A pregap (`INDEX 00`) folds into the *preceding* track's range, matching Redump's own split-track convention - see its doc comment. |
 | `archive` | zip/7z/rar listing and extraction (replaces the external `7z` dependency). |
 | `tools` | Resolves `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper`: embedded-for-this-platform first, then `PATH`. CHD, RVZ and Xbox XDVDFS are complex, emulator-sensitive codecs not worth reimplementing; Skyscraper is a mature scraper not worth reimplementing either, see Scope boundaries. `AllStatuses` (`status.go`) reports the same embedded/PATH/missing resolution read-only, with no extraction or execution, for `romctl tools`. |
 | `datdb` | Embeds and parses No-Intro/Redump DAT snapshots (Logiqx XML: per-game CRC32/MD5/SHA1), staged by `make dats` from packs the maintainer downloads by hand (see "DAT snapshot status" below) — platform-agnostic, unlike `tools`' per-`GOOS`/`GOARCH` embedding, since a DAT file isn't a compiled binary. `systemdb.Dat` maps a romctl system directory name to the provider ("no-intro" or "redump") and that provider's own pack name; a system with no real DAT equivalent (arcade, a few CD/laserdisc niches) is left out, same convention as `SkyscraperPlatform`. `AllStatuses` (`status.go`) reports embedded/missing + each snapshot's own header version/date, read-only, for `romctl tools`'s second table. `commands.Collection` is the thin wrapper that actually hashes a library and matches it against `Load`'s result; see its doc comment for the CHD-unverifiable limitation. `commands.Identify` reuses that same hashing/matching to go one step further and actually rename a confirmed match to its DAT game name, run through `actions.ApplyScheme` (the same `--naming` logic `rename` uses) — additive only: a file it can't confirm by hash (no match, a multi-ROM `Game` whose match spans more than one file, a hash shared by two different `Game`s, `ClassArcade`, `.chd`) is left completely untouched, not reformatted the way plain `rename` would. Its own command rather than a `rename` flag, for the same "an instant command shouldn't grow an occasionally-expensive hashing path" reasoning that already splits `dupes`/`verify` out of `check`. |
@@ -214,14 +215,24 @@ unverified against a real Redump download.
 
 Two deliberate, lasting limitations, not TODOs:
 
-- **CHD-converted disc ROMs report as "unverifiable," not matched.** No
+- **CHD-converted disc ROMs report as "unverifiable" by default.** No
   CHD metadata stores a per-track hash that lines up with a Redump DAT
-  entry (`chdman verify` only checks a CHD against itself), and
-  re-extracting every `.chd` back to raw tracks to re-hash was ruled out as
-  slow, disk-heavy, and not even guaranteed byte-exact for multi-track CDs.
-  Cartridge systems (No-Intro) are unaffected — they're never
-  CHD-converted — so `romctl collection` gives them a real have/missing
-  verdict.
+  entry (`chdman verify` only checks a CHD against itself). `--verify-chd`
+  (on both `collection` and `identify`) opts into a real verdict instead:
+  it extracts the `.chd` via `chdman extractcd`/`extractdvd`
+  (`internal/commands/chd_verify.go`'s `hashDiscCHD`, into scratch space -
+  `chdScratchDir`'s tmpfs when there's room) and hashes the result -
+  per-track byte ranges for a CD, parsed from chdman's own generated cue
+  sheet (`internal/formats/cuesheet`), the whole file for a DVD/UMD. A
+  Redump DAT's own `.cue`/`.ccd`/`.sub`/`.toc` sidecar entries are ignored
+  for this path (`stripSidecarROMs`): chdman's regenerated cue sheet can
+  never byte-match Redump's distributed one, even with perfectly correct
+  track data, so a Game counts as matched once every actual binary track
+  is found. This is opt-in, not the default, because it costs about what a
+  full `verify` pass already costs (full decompression) and is a new
+  runtime dependency on `chdman` neither command otherwise has. Cartridge
+  systems (No-Intro) are unaffected either way — they're never
+  CHD-converted — so they always get a real have/missing verdict.
 - **No parent/clone (1G1R) grouping.** Every DAT entry — including every
   region/revision/translation variant — is its own row in `romctl
   collection`'s output.

@@ -365,13 +365,21 @@ A game only counts as `have` when every ROM it needs (a multi-disc or
 multi-chip game can need more than one) is found among local files by
 CRC32/MD5/SHA1, matched whichever way the DAT entry itself provides -
 including inside a `.zip`/`.7z`/`.rar`, hashed without extracting to disk.
-`.chd` files report as `unverifiable`, not matched or missing: no CHD
-metadata stores a hash that lines up with a Redump DAT entry (`chdman
-verify` only checks a CHD against itself), so there's nothing to compare
-against without re-extracting the whole disc image back to raw tracks -
-slow, and not even guaranteed byte-exact for multi-track CDs. This only
-affects disc-based systems; cartridge systems are never CHD-converted, so
-they always get a real have/missing verdict.
+`.chd` files report as `unverifiable` by default, not matched or missing:
+no CHD metadata stores a hash that lines up with a Redump DAT entry
+(`chdman verify` only checks a CHD against itself). Pass `--verify-chd`
+for a real verdict instead: it extracts the `.chd` (`chdman extractcd`/
+`extractdvd`) into scratch space and hashes the result - per-track for a
+multi-track CD, parsed from chdman's own generated cue sheet - at a real
+cost, roughly what a full `verify` pass already costs, and it's a new
+dependency on `chdman` that `collection` otherwise doesn't need at all.
+A Redump DAT's own `.cue` entry (commonly hashed alongside the binary
+tracks) is ignored on this path: chdman's regenerated cue sheet can never
+byte-match Redump's distributed one, even with perfectly correct track
+data, so a game counts as matched once every actual track is found.
+Cartridge systems are unaffected either way - they're never
+CHD-converted, so they always get a real have/missing verdict regardless
+of this flag.
 
 Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game
@@ -392,12 +400,13 @@ It's additive, not a blanket reformat: a file `identify` can't confirm by
 hash is left completely untouched, whatever its current name - a DAT
 `Game` with more than one `ROM` whose match spans more than one file, a
 hash shared by two different `Game`s, an arcade system, or a `.chd` (same
-"unverifiable" reasoning as `collection`) are all skipped. Run `rename`
-separately afterward for generic tag cleanup on anything `identify`
-didn't touch. Same collision safety as every other rename in romctl: if
-the target name is already taken by a different file, the rename is
-skipped and logged, never overwritten. Takes the same `--dat-dir`
-override as `collection`.
+"unverifiable" reasoning as `collection`, and the same `--verify-chd` to
+opt into renaming a hash-confirmed disc instead) are all skipped. Run
+`rename` separately afterward for generic tag cleanup on anything
+`identify` didn't touch. Same collision safety as every other rename in
+romctl: if the target name is already taken by a different file, the
+rename is skipped and logged, never overwritten. Takes the same
+`--dat-dir`/`--verify-chd` as `collection`.
 
 It's its own command rather than a `rename` flag for the same reason
 `dupes`/`verify` are their own commands: hashing a whole library is

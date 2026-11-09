@@ -34,9 +34,11 @@ import (
 // byte-identical ROM shared by two DAT entries) is left alone rather
 // than guessed at. ClassArcade systems are skipped entirely, same as
 // `rename` already does: arcade filenames are emulator-resolved set
-// names. A `.chd` is never hashed or considered at all, for the same
+// names. A `.chd` is never hashed or renamed by default, for the same
 // reason Collection reports it "unverifiable" - no CHD metadata hash
-// lines up with a Redump DAT entry.
+// lines up with a Redump DAT entry; verifyCHD (--verify-chd) opts into
+// extracting and hashing it instead, same cost/caveats as Collection's
+// own verifyCHD - see its doc comment.
 //
 // This is its own command, not a `rename` flag, for the same reason
 // `dupes`/`verify` are their own commands rather than `check` flags:
@@ -47,12 +49,21 @@ import (
 // verbose mode on a real terminal, one plain "[i/total] hash sys/file"
 // line per file in verbose mode otherwise, or an "identify: done/total"
 // counter by default.
-func Identify(lib *library.Library, runner *actions.Runner, systems []string, datDir string, scheme actions.Scheme) (bool, error) {
+func Identify(lib *library.Library, runner *actions.Runner, systems []string, datDir string, verifyCHD bool, scheme actions.Scheme) (bool, error) {
 	start := time.Now()
 	log := cliutil.NewLogger("identify", runner.Format)
 
+	var chdmanPath string
+	if verifyCHD {
+		var err error
+		if chdmanPath, err = resolveCHDManIfNeeded(systems); err != nil {
+			return false, err
+		}
+	}
+
 	type sysJob struct {
 		sys   string
+		class systemdb.Class
 		names []string
 		df    *datdb.Datafile
 	}
@@ -60,7 +71,8 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	total := 0
 	failedLoad := false
 	for _, sys := range systems {
-		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
+		class := systemdb.ClassOf(sys)
+		if class == systemdb.ClassArcade {
 			continue
 		}
 		df, ok, err := datdb.Load(sys, datDir)
@@ -71,6 +83,9 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 			fmt.Fprintf(os.Stderr, "identify: %s: %v\n", sys, err)
 			failedLoad = true
 			continue
+		}
+		if verifyCHD && isDiscClass(class) {
+			df = stripSidecarROMs(df)
 		}
 		entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
 		if err != nil {
@@ -83,7 +98,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 			}
 			names = append(names, e.Name())
 		}
-		jobs = append(jobs, sysJob{sys, names, df})
+		jobs = append(jobs, sysJob{sys, class, names, df})
 		total += len(names)
 	}
 
@@ -100,6 +115,19 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 			hashOne := func(name string) bool {
 				defer tick()
 				if strings.ToLower(filepath.Ext(name)) == ".chd" {
+					if !verifyCHD || !isDiscClass(job.class) {
+						return true
+					}
+					hashes, err := hashDiscCHD(chdmanPath, filepath.Join(sysDir, name), job.class)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "identify: %s/%s: extraction failed, leaving untouched: %v\n", job.sys, name, err)
+						return true
+					}
+					mu.Lock()
+					for _, h := range hashes {
+						byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+					}
+					mu.Unlock()
 					return true
 				}
 				crc, md5sum, sha1sum, err := hashROM(filepath.Join(sysDir, name))
@@ -128,10 +156,19 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 			matched := map[string]string{} // filename -> canonical game name
 			ambiguous := map[string]bool{}
 			for _, m := range job.df.Match(byCRC, byMD5, bySHA1) {
-				if !m.Have || len(m.Matched) != 1 {
+				if !m.Have {
 					continue
 				}
-				name := m.Matched[0]
+				// A multi-track --verify-chd match repeats the same
+				// filename once per matched track - dedup before
+				// judging "how many files does this span": one unique
+				// name is still a legitimate single-file rename target,
+				// unlike a genuine multi-ROM match across separate files.
+				names := dedupStrings(m.Matched)
+				if len(names) != 1 {
+					continue
+				}
+				name := names[0]
 				if existing, ok := matched[name]; ok && existing != m.Game {
 					ambiguous[name] = true
 					continue

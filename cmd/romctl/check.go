@@ -124,7 +124,8 @@ func newCollectionCmd() *cobra.Command {
 			}
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			datDir, _ := cmd.Flags().GetString("dat-dir")
-			ok, err := commands.Collection(appCtx.lib, systems, datDir, verbose, appCtx.format)
+			verifyCHD, _ := cmd.Flags().GetBool("verify-chd")
+			ok, err := commands.Collection(appCtx.lib, systems, datDir, verifyCHD, verbose, appCtx.format)
 			if err != nil {
 				return err
 			}
@@ -135,6 +136,7 @@ func newCollectionCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("dat-dir", "", "")
+	cmd.Flags().Bool("verify-chd", false, "")
 	return cmd
 }
 

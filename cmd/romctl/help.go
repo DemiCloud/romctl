@@ -32,6 +32,7 @@ const (
 	flagScrapeThreads = "      --scrape-threads N  scrape thread count (default: [scrape] threads, else auto)"
 	flagDest          = "      --dest DIR          saves: move into DIR/saves, DIR/states instead of the library root"
 	flagDatDir        = "      --dat-dir DIR       use DAT files from DIR instead of the embedded snapshot"
+	flagVerifyCHD     = "      --verify-chd        extract and hash-verify .chd files against the DAT too (needs chdman; slower)"
 	flagHelp          = "  -h, --help              show this help"
 	flagVersion       = "      --version           show version"
 )
@@ -66,8 +67,8 @@ var commandTable = map[string]cmdInfo{
 	"bios":       {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagFormat}},
-	"identify":   {"rename files to their DAT-verified canonical name", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDatDir, flagFormat}},
+	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagVerifyCHD, flagFormat}},
+	"identify":   {"rename files to their DAT-verified canonical name", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDatDir, flagVerifyCHD, flagFormat}},
 	"system":     {"system information (see 'system list', 'system games')", "", nil},
 	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
 	"games":      {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},

@@ -60,7 +60,7 @@ func TestIdentifyRenamesMatchedFileThroughScheme(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeNoTag)
+	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeNoTag)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestIdentifySchemeKeepPreservesDatTags(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestIdentifyLeavesUnmatchedFileAlone(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Some Known Game", []byte("different-content-entirely"), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeKeep)
+	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestIdentifyCollisionSkipped(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +167,7 @@ func TestIdentifySkipsMultiROMMatch(t *testing.T) {
 	}
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +185,7 @@ func TestIdentifyDryRunRenamesNothing(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain, DryRun: true}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,7 +204,7 @@ func TestIdentifySkipsArcade(t *testing.T) {
 	}
 	lib := library.Open(root)
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"arcade"}, "", actions.SchemeKeep)
+	ok, err := Identify(lib, runner, []string{"arcade"}, "", false, actions.SchemeKeep)
 	if err != nil {
 		t.Fatal(err)
 	}
