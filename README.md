@@ -412,7 +412,10 @@ A non-structured run (Fancy/Plain) ends with a table of every match -
 file, game name, and the CRC32 that confirmed it - sorted so each system's
 rows sit together. `--limit N` caps that table at N rows per system
 without limiting how many files actually get renamed; a system that was
-truncated gets a one-line note naming how many more it had.
+truncated gets a one-line note naming how many more it had. A run that
+skipped `.chd` files (no `--verify-chd`) says so and how many, so a CHD-
+converted library renaming nothing reads as "expected" rather than "did
+this even do anything."
 
 It's its own command rather than a `rename` flag for the same reason
 `dupes`/`verify` are their own commands: hashing a whole library is

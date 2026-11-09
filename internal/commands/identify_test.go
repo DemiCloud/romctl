@@ -282,3 +282,45 @@ func TestIdentifyLimitTruncatesPerSystem(t *testing.T) {
 		}
 	}
 }
+
+// TestIdentifyNotesSkippedCHDWithoutVerifyCHD guards the "no output"
+// surprise a CHD-converted library used to hit: identify silently skips
+// every .chd by default (see the package doc comment), so a run over a
+// library that's already all-CHD legitimately renames nothing - but it
+// should say why instead of looking exactly like a run that found no
+// matches at all.
+func TestIdentifyNotesSkippedCHDWithoutVerifyCHD(t *testing.T) {
+	lib, sysDir := newTestLib(t, nil)
+	psxDir := filepath.Join(filepath.Dir(sysDir), "psx")
+	if err := os.MkdirAll(psxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(psxDir, "Game.chd"), []byte("chd-stub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	datDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(datDir, "redump"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dat := `<datafile><header><name>Sony - PlayStation</name><version>test</version></header>
+<game name="Game"><rom name="game.bin" size="8" crc="deadbeef" md5="00" sha1="00"/></game>
+</datafile>`
+	if err := os.WriteFile(filepath.Join(datDir, "redump", "Sony - PlayStation.dat"), []byte(dat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	out := captureStdout(t, func() {
+		ok, err := Identify(lib, runner, []string{"psx"}, datDir, false, actions.SchemeKeep, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Identify reported failure for a run that simply had nothing to verify")
+		}
+	})
+
+	if !strings.Contains(out, "1 .chd file(s) not checked") || !strings.Contains(out, "--verify-chd") {
+		t.Errorf("expected a note explaining the skipped .chd, got:\n%s", out)
+	}
+}

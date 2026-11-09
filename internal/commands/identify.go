@@ -120,7 +120,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 
 	verbose, format := runner.Verbose, runner.Format
 	live := verbose && cliutil.CanAnimate(format)
-	var renamed, failed atomic.Int64
+	var renamed, failed, skippedCHD atomic.Int64
 	var rows []identifyRow
 	doneSoFar := 0
 	process := func(tick func()) {
@@ -134,6 +134,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 				defer tick()
 				if strings.ToLower(filepath.Ext(name)) == ".chd" {
 					if !verifyCHD || !isDiscClass(job.class) {
+						skippedCHD.Add(1)
 						return true
 					}
 					hashes, err := hashDiscCHD(chdmanPath, filepath.Join(sysDir, name), job.class)
@@ -240,6 +241,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	if runner.Format.Structured() {
 		runner.SetCount("renamed", renamed.Load())
 		runner.SetCount("failed", failed.Load())
+		runner.SetCount("chd_skipped", skippedCHD.Load())
 		return len(datIssues) == 0 && failed.Load() == 0, nil
 	}
 
@@ -255,6 +257,9 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		for _, sys := range moreSystems {
 			fmt.Printf("identify: %s: %d more match(es) not shown (--limit %d)\n", sys, moreCounts[sys], limit)
 		}
+	}
+	if n := skippedCHD.Load(); n > 0 {
+		fmt.Printf("identify: %d .chd file(s) not checked (pass --verify-chd to include them)\n", n)
 	}
 
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)

@@ -70,14 +70,22 @@ func (r *Runner) Summaries() []string {
 // Act prints a plan:/do: line for desc (recording it instead, under a
 // structured Format - see Log) and reports whether the caller should
 // actually perform the action: true when applying, false when previewing
-// (the caller should print the line and skip the side effect).
+// (the caller should print the line and skip the side effect). Every
+// true return (an actual, non-dry-run action every mutating command
+// funnels through this one method to get) also counts toward
+// ActionsPerformed, regardless of whether the attempted action goes on
+// to succeed.
 func (r *Runner) Act(format string, args ...any) bool {
 	desc := fmt.Sprintf(format, args...)
 	if r.Format.Structured() {
 		r.mu.Lock()
 		r.log = append(r.log, desc)
 		r.mu.Unlock()
-		return !r.DryRun
+		if r.DryRun {
+			return false
+		}
+		actionsPerformed.Add(1)
+		return true
 	}
 	colors := cliutil.ColorsFor(r.Format)
 	if r.DryRun {
@@ -87,6 +95,7 @@ func (r *Runner) Act(format string, args ...any) bool {
 	if r.Verbose {
 		fmt.Printf("%sdo:%s   %s\n", colors.Green, colors.Reset, desc)
 	}
+	actionsPerformed.Add(1)
 	return true
 }
 
@@ -160,6 +169,21 @@ var retired atomic.Int64
 // during this process.
 func RetiredCount() int {
 	return int(retired.Load())
+}
+
+// actionsPerformed counts every real (non-dry-run) action Act has
+// green-lit during this process - same per-process atomic-tally
+// convention as retired/RetiredCount, used by main.go to decide whether
+// a "don't forget to sync" reminder is warranted. A run where nothing
+// was ever going to change anything on disk (e.g. identify's matches
+// were all CHD-unverifiable, or already correctly named) shouldn't get
+// one just because [sync] host happens to be configured.
+var actionsPerformed atomic.Int64
+
+// ActionsPerformed reports how many real actions Act has green-lit
+// during this process.
+func ActionsPerformed() int {
+	return int(actionsPerformed.Load())
 }
 
 // Retire moves path into its directory's _to_delete/, creating it if

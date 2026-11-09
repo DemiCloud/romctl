@@ -236,7 +236,7 @@ func postMutate(cmd *cobra.Command) {
 	if n := actions.RetiredCount(); n > 0 {
 		fmt.Printf("%d item(s) pending in _to_delete/; run `%s clean` to remove\n", n, cliutil.ProgName())
 	}
-	if appCtx.cfg.Sync.Host != "" {
+	if appCtx.cfg.Sync.Host != "" && actions.ActionsPerformed() > 0 {
 		fmt.Printf("don't forget `%s sync` to push these changes to the device\n", cliutil.ProgName())
 	}
 }
