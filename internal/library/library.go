@@ -25,8 +25,15 @@ type Library struct {
 }
 
 // Open resolves root into a Library. It does not require bios/ to exist,
-// but callers that need roms/ should check Roms themselves.
+// but callers that need roms/ should check Roms themselves. root is always
+// made absolute: romctl shells out to external tools (Skyscraper in
+// particular, which chdirs to ~/.skyscraper before resolving any relative
+// -i/-g/-o it's given) that can't be trusted to resolve a relative path
+// against romctl's own working directory.
 func Open(root string) *Library {
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	root = strings.TrimRight(filepath.Clean(root), string(filepath.Separator))
 	return &Library{
 		Root:   root,
