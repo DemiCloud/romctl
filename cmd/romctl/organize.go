@@ -9,7 +9,7 @@ import (
 
 func newRenameCmd() *cobra.Command {
 	cmd := newHiddenStepCmd("rename [SYSTEM...|all]", "apply the configured naming scheme to loose files")
-	cmd.Flags().String("scheme", "", "")
+	cmd.Flags().String("naming", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
 		if err != nil {

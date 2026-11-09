@@ -98,7 +98,14 @@ func Saves(lib *library.Library, runner *actions.Runner, systems []string, dest 
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%ssaves: %d moved, %d conflicts, %d failed in %s%s\n", color, moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second), reset)
-	printFileConflicts(os.Stdout, conflicts)
+	line := fmt.Sprintf("%ssaves: %d moved, %d conflicts, %d failed in %s%s\n", color, moved.Load(), len(conflicts), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		var buf strings.Builder
+		printFileConflicts(&buf, conflicts)
+		runner.Summarize(line + buf.String())
+	} else {
+		fmt.Print(line)
+		printFileConflicts(os.Stdout, conflicts)
+	}
 	return failed.Load() == 0, nil
 }

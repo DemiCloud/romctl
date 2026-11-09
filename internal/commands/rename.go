@@ -72,7 +72,12 @@ func Rename(lib *library.Library, runner *actions.Runner, systems []string, sche
 		return nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%srename: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%srename: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return nil
 }
 

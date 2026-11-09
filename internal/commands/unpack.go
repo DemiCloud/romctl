@@ -24,9 +24,13 @@ type unpackJob struct {
 	sys, base string
 }
 
-// Unpack extracts single-file archives in cartridge/N64/SNES systems;
-// multi-file archives are left alone (there's no single "the game" file
-// to promote).
+// Unpack extracts single-file archives in cartridge/N64/SNES/Dolphin/Xbox
+// systems; multi-file archives are left alone (there's no single "the
+// game" file to promote). CD/DVD/UMD-class systems and PS3 are
+// deliberately excluded - CHD (chd.go) and internal/discimage already
+// extract their own archives directly as part of conversion, so handling
+// them here too would mean two code paths racing to unpack the same
+// archive; arcade sets are never unpacked at all (see check.go).
 func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
 	log := cliutil.NewLogger("unpack", runner.Format)
@@ -35,7 +39,7 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 	var jobs []unpackJob
 	for _, sys := range systems {
 		switch systemdb.ClassOf(sys) {
-		case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES:
+		case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES, systemdb.ClassDolphin, systemdb.ClassXbox:
 		default:
 			continue
 		}
@@ -56,7 +60,7 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 		}
 	}
 
-	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "unpack", len(jobs), func(tick func()) {
+	cliutil.Progress(runner.Format, runner.Verbose || runner.Quiet, runner.DryRun, "unpack", len(jobs), func(tick func()) {
 		cliutil.Parallel(jobs, func(j unpackJob) {
 			defer tick()
 			sys, base := j.sys, j.base
@@ -106,7 +110,12 @@ func Unpack(lib *library.Library, runner *actions.Runner, systems []string) (boo
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%sunpack: %d unpacked, %d skipped, %d failed in %s%s\n", color, unpacked.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%sunpack: %d unpacked, %d skipped, %d failed in %s%s\n", color, unpacked.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return failed.Load() == 0, nil
 }
 

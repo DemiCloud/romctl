@@ -44,26 +44,33 @@ func maxLiveSlots() int {
 }
 
 // Phase is one named unit of work for RunPhases: a label shown on its own
-// line and the function that performs it.
+// line and the function that performs it. Fn reports whether the phase
+// succeeded, coloring its final marker green (true) or red (false) -
+// exactly like ParallelLive's own pass/fail icon - rather than always
+// showing success.
 type Phase struct {
 	Label string
-	Fn    func()
+	Fn    func() bool
 }
 
 // RunPhases runs every phase in order, each on its own stderr line: all
 // labels print up front (right-padded to a shared column so every colon
 // lines up), so the full plan is visible before any phase finishes, and
 // each line is then updated in place - spinning while its phase runs,
-// left reading "label: ✓ done" once it finishes - rather than erased, so
-// a completed phase stays visible alongside the ones still running.
-// Skipped - every Fn just runs directly, in order - outside Fancy format
-// (Plain and every structured format print no decoration at all), when
-// verbose (a phase prints its own output instead, which would collide
-// with the lines here), or when stderr isn't a terminal (no point
-// animating output nobody sees live, and it would otherwise write control
-// characters into a piped/redirected stream).
-func RunPhases(format Format, verbose bool, phases []Phase) {
-	if !format.Fancy() || verbose || !term.IsTerminal(int(os.Stderr.Fd())) {
+// left reading "label: ✓ done" (or "label: ✗ failed", see Phase.Fn) once
+// it finishes - rather than erased, so a completed phase stays visible
+// alongside the ones still running. Skipped - every Fn just runs
+// directly, in order - outside Fancy format (Plain and every structured
+// format print no decoration at all), when verbose (a phase prints its
+// own output instead, which would collide with the lines here), when
+// dryRun (a preview's "plan:" lines matter more than a spinner, and
+// printing them while this animates would corrupt its redraw, the same
+// hazard noted on cliutil.ParallelLive's worker-row cap), or when stderr
+// isn't a terminal (no point animating output nobody sees live, and it
+// would otherwise write control characters into a piped/redirected
+// stream).
+func RunPhases(format Format, verbose, dryRun bool, phases []Phase) {
+	if !format.Fancy() || verbose || dryRun || !term.IsTerminal(int(os.Stderr.Fd())) {
 		for _, p := range phases {
 			p.Fn()
 		}
@@ -113,10 +120,14 @@ func RunPhases(format Format, verbose bool, phases []Phase) {
 			}
 		}()
 
-		p.Fn()
+		ok := p.Fn()
 		close(done)
 		<-stopped
-		redraw(i, colors.Green+"✓"+colors.Reset+" done")
+		if ok {
+			redraw(i, colors.Green+"✓"+colors.Reset+" done")
+		} else {
+			redraw(i, colors.Red+"✗"+colors.Reset+" failed")
+		}
 	}
 }
 

@@ -52,7 +52,7 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 		}
 	}
 
-	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "snes", len(jobs), func(tick func()) {
+	cliutil.Progress(runner.Format, runner.Verbose || runner.Quiet, runner.DryRun, "snes", len(jobs), func(tick func()) {
 		cliutil.Parallel(jobs, func(j snesJob) {
 			defer tick()
 			sys, base := j.sys, j.base
@@ -108,7 +108,12 @@ func SNES(lib *library.Library, runner *actions.Runner, systems []string) error 
 		return nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%ssnes: %d processed, %d failed in %s%s\n", color, processed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%ssnes: %d processed, %d failed in %s%s\n", color, processed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return nil
 }
 

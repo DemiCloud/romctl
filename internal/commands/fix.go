@@ -54,26 +54,54 @@ func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, sc
 // own failures don't stop the run - same "report everything, don't abort
 // midway" behavior every step already has internally - they just mark
 // the overall result failed and move on to the next step.
+//
+// Every step runs across the same systems, not a different directory per
+// step - a step simply has nothing to do, and reports zero, wherever none
+// of the given systems belong to the class it handles (e.g. "fix snes"
+// runs all eleven steps, but chd/rvz/xiso/ps3 are no-ops for a system
+// whose class isn't theirs).
+//
+// On a real (non-dry-run, non-verbose) run to a Fancy terminal, this
+// drives the same live per-phase display check/bios/dupes/verify already
+// use (cliutil.RunPhases) instead of each step printing its own counts
+// the moment it finishes: runner.Quiet tells every step to hand its
+// one-line summary to runner.Summarize instead, and every summary prints
+// together, in step order, once every phase is done - one coherent
+// report instead of eleven lines each sandwiched between that step's own
+// "N/N done" progress line and the next step's label.
 func Fix(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, savesDest string) (bool, error) {
 	start := time.Now()
 	log := cliutil.NewLogger("fix", runner.Format)
+	runner.Quiet = cliutil.CanAnimate(runner.Format) && !runner.Verbose && !runner.DryRun
+
+	steps := fixSteps(lib, runner, systems, scheme, savesDest)
 	ok := true
-	for _, step := range fixSteps(lib, runner, systems, scheme, savesDest) {
-		stepOK, err := step.run()
-		if err != nil {
-			log.Errf("%s: %v", step.name, err)
-			ok = false
-			continue
-		}
-		if !stepOK {
-			ok = false
-		}
+	phases := make([]cliutil.Phase, len(steps))
+	for i, step := range steps {
+		step := step
+		phases[i] = cliutil.Phase{Label: step.name, Fn: func() bool {
+			stepOK, err := step.run()
+			if err != nil {
+				log.Errf("%s: %v", step.name, err)
+				ok = false
+				return false
+			}
+			if !stepOK {
+				ok = false
+			}
+			return stepOK
+		}}
 	}
+	cliutil.RunPhases(runner.Format, runner.Verbose, runner.DryRun, phases)
+
 	if runner.Format.Structured() {
 		// Every step above already reported its own counts to this same
 		// shared runner (see actions.Result's doc comment on same-named
 		// keys merging across steps); nothing left to add here.
 		return ok, nil
+	}
+	for _, line := range runner.Summaries() {
+		fmt.Print(line)
 	}
 	color, reset := cliutil.StatusColor(runner.Format, !ok)
 	fmt.Printf("%sfix: done in %s%s\n", color, time.Since(start).Round(time.Second), reset)

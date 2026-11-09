@@ -37,7 +37,7 @@ func newHiddenStepCmd(use, short string) *cobra.Command {
 
 func newCHDCmd() *cobra.Command {
 	cmd := newHiddenStepCmd("chd [SYSTEM...|all]", "convert disc images to CHD")
-	cmd.Flags().String("scheme", "", "")
+	cmd.Flags().String("naming", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
 		if err != nil {
@@ -112,7 +112,7 @@ func newM3UCmd() *cobra.Command {
 
 func newPS3Cmd() *cobra.Command {
 	cmd := newHiddenStepCmd("ps3 [SYSTEM...|all]", "unpack PS3 archives, then build ISOs from disc folders")
-	cmd.Flags().String("scheme", "", "")
+	cmd.Flags().String("naming", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
 		if err != nil {

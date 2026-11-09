@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,4 +112,38 @@ func TestResolveRootPrecedence(t *testing.T) {
 			t.Errorf("resolveRoot() = %q, want .", got)
 		}
 	})
+}
+
+// TestHelpNeverRecurses exercises --help on every kind of command printHelp
+// has to handle: the root, a leaf in commandTable, a grouping command with
+// no commandTable entry (system), and cobra's own built-in subtree
+// (completion) - which isn't in commandTable either. A command's own
+// UsageFunc resolves (by walking up to root) to the same function set as
+// its HelpFunc; printHelp's fallback used to call into cobra's
+// template-based default HelpFunc, which renders by calling UsageString(),
+// which calls back into that same UsageFunc - an infinite loop that
+// crashed the whole process with a stack overflow (not a recoverable
+// panic) for any command not listed in commandTable. A regression here
+// reintroduces that crash rather than failing cleanly.
+func TestHelpNeverRecurses(t *testing.T) {
+	for _, args := range [][]string{
+		{"--help"},
+		{"check", "--help"},
+		{"system", "--help"},
+		{"system", "list", "--help"},
+		{"system", "games", "--help"},
+		{"completion", "--help"},
+		{"help"},
+		{"help", "system"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := newRootCmd()
+			root.SetArgs(args)
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute(%v) = %v", args, err)
+			}
+		})
+	}
 }

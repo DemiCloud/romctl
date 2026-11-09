@@ -55,7 +55,7 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 		}
 	}
 
-	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "xiso", len(jobs), func(tick func()) {
+	cliutil.Progress(runner.Format, runner.Verbose || runner.Quiet, runner.DryRun, "xiso", len(jobs), func(tick func()) {
 		cliutil.Parallel(jobs, func(j xisoJob) {
 			defer tick()
 			sys, base := j.sys, j.base
@@ -112,7 +112,12 @@ func Xiso(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%sxiso: %d converted, %d renamed, %d failed in %s%s\n", color, converted.Load(), renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%sxiso: %d converted, %d renamed, %d failed in %s%s\n", color, converted.Load(), renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return failed.Load() == 0, nil
 }
 

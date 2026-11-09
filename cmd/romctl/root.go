@@ -76,7 +76,6 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE:     buildAppContext,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
-	defaultHelpFunc = root.HelpFunc()
 	root.SetHelpFunc(printHelp)
 	root.SetUsageFunc(func(cmd *cobra.Command) error { printHelp(cmd, nil); return nil })
 
@@ -86,7 +85,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("yes", false, "")
 	root.PersistentFlags().String("format", "", "")
 
-	root.AddCommand(newCheckCmd(), newBiosCmd(), newDupesCmd(), newVerifyCmd(), newListCmd(), newSystemsCmd(), newToolsCmd(), newVersionCmd())
+	root.AddCommand(newCheckCmd(), newBiosCmd(), newDupesCmd(), newVerifyCmd(), newSystemCmd(), newToolsCmd(), newVersionCmd())
 	root.AddCommand(newFixCmd())
 	root.AddCommand(newRenameCmd(), newUnpackCmd(), newCHDCmd(), newM3UCmd(),
 		newN64Cmd(), newSNESCmd(), newXisoCmd(), newRVZCmd(), newPS3Cmd(), newSavesCmd(), newRelocateCmd())
@@ -280,12 +279,12 @@ func runMutating(cmd *cobra.Command, args []string, fn func(systems []string, ru
 	return nil
 }
 
-// resolveScheme applies `--scheme` over `[naming] scheme` - only called
+// resolveScheme applies `--naming` over `[naming] scheme` - only called
 // by the commands that take a naming scheme (check, fix, rename, chd, ps3).
 func resolveScheme(cmd *cobra.Command) (actions.Scheme, error) {
 	schemeStr := appCtx.cfg.Naming.Scheme
-	if cmd.Flags().Changed("scheme") {
-		schemeStr, _ = cmd.Flags().GetString("scheme")
+	if cmd.Flags().Changed("naming") {
+		schemeStr, _ = cmd.Flags().GetString("naming")
 	}
 	return actions.ParseScheme(schemeStr)
 }

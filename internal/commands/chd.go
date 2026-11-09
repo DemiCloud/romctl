@@ -73,7 +73,7 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		}
 	}
 
-	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "chd", len(jobs), func(tick func()) {
+	cliutil.Progress(runner.Format, runner.Verbose || runner.Quiet, runner.DryRun, "chd", len(jobs), func(tick func()) {
 		cliutil.Parallel(jobs, func(j chdJob) {
 			defer tick()
 			sys, class, base, i, total := j.sys, j.class, j.base, j.idx, j.total
@@ -203,7 +203,12 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%schd: %d converted, %d skipped, %d failed in %s%s\n", color, converted.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%schd: %d converted, %d skipped, %d failed in %s%s\n", color, converted.Load(), skipped.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return failed.Load() == 0, nil
 }
 

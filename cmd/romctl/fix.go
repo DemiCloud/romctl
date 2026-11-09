@@ -10,7 +10,7 @@ import (
 func newFixCmd() *cobra.Command {
 	cmd := newMutatingCmd("fix [SYSTEM...|all]",
 		"run every local fix step: relocate, unpack, chd, dvd, rvz, xiso, n64, snes, ps3, m3u, rename, saves")
-	cmd.Flags().String("scheme", "", "")
+	cmd.Flags().String("naming", "", "")
 	cmd.Flags().String("dest", "", "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)

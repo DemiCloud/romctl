@@ -35,10 +35,36 @@ type Runner struct {
 	// Result from Snapshot/Log/DryRun|&c. after the command returns,
 	// rather than the command printing its own text piecemeal.
 	Format cliutil.Format
+	// Quiet tells a step command invoked as part of a larger run (see
+	// commands.Fix) to hand its final one-line summary to Summarize
+	// instead of printing it immediately - the caller collects every
+	// step's summary and prints them together once the whole run
+	// finishes, rather than interleaving them with per-step progress
+	// animation. Unused (summaries print immediately as always) by every
+	// command that doesn't opt in.
+	Quiet bool
 
-	mu     sync.Mutex
-	counts map[string]int64
-	log    []string
+	mu        sync.Mutex
+	counts    map[string]int64
+	log       []string
+	summaries []string
+}
+
+// Summarize records line (a command's own final summary, already fully
+// formatted and newline-terminated) for a caller to print later instead of
+// now - see Quiet.
+func (r *Runner) Summarize(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.summaries = append(r.summaries, line)
+}
+
+// Summaries returns every line recorded via Summarize so far, in the order
+// recorded.
+func (r *Runner) Summaries() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.summaries...)
 }
 
 // Act prints a plan:/do: line for desc (recording it instead, under a

@@ -26,7 +26,7 @@ that retires anything prints a reminder of how many items are waiting.
 
 A single `romctl` binary for your platform (Linux, Windows or macOS) —
 nothing else to install for most commands. `check`, `bios`, `rename`,
-`unpack`, `m3u`, `n64`, `snes`, `clean` and `systems` are pure Go: archive
+`unpack`, `m3u`, `n64`, `snes`, `clean` and `system` are pure Go: archive
 handling, CSO decompression and ISO9660 reading/writing are built in. Four
 commands still shell out to an external tool: three for formats (CHD, RVZ
 and the Xbox XDVDFS disc format) complex and emulator-sensitive enough not
@@ -188,10 +188,11 @@ falls back to disk when it isn't safe to use.
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
-| `list` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
+| `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
+| `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
-| `unpack` | Extract single-file archives in cartridge systems. |
+| `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
 | `m3u` | Group loose `Title (Disc N).chd` files into `Title.m3u/`. |
 | `n64` | Normalize `.v64`/`.n64` byte orders to big-endian `.z64`. |
@@ -204,7 +205,6 @@ falls back to disk when it isn't safe to use.
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
-| `systems` | List every known system and its class, whether or not it's populated. |
 | `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither - see [Requirements](#requirements). |
 
 Typical session:
@@ -388,8 +388,8 @@ ES-DE itself generates a `systems.txt` at the library root (one line per
 system, `<dir>: <full name>`) the first time it builds out the ROM
 directory tree - a convenience file for users, straight from whatever
 RetroDECK version is actually installed. When it's present, romctl
-prefers it over its own hand-ported system-name table (`list`'s full
-names) and uses it to flag a `roms/<dir>/` that neither romctl nor that
+prefers it over its own hand-ported system-name table (`system games`'s
+full names) and uses it to flag a `roms/<dir>/` that neither romctl nor that
 install's own system list recognizes at all - most likely a typo or a
 leftover from a system you no longer use:
 
@@ -425,7 +425,7 @@ Disc numbers are zero-padded so they sort correctly.
 
 How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit treat
 region/dump tags depends on `[naming] scheme` in the config file, or
-`--scheme` on the command line (see [Configuration](#configuration)):
+`--naming` on the command line (see [Configuration](#configuration)):
 
 | `scheme` | Behavior |
 |---|---|
@@ -458,7 +458,7 @@ Independent of `scheme`:
 | CD-based: PS1, Saturn, Sega CD, PC Engine CD, Dreamcast, 3DO, ... | CHD (`createcd`) | Lossless; FLAC for audio tracks. Default codecs. |
 | PS2 | CHD (`createdvd -hs 2048`) | DVD titles must be DVD-type CHDs. The few CD-based PS2 titles stay CD-type. |
 | PSP | CHD (`createdvd -hs 2048`) | Recommended by RetroDECK; needs PPSSPP 1.17+. CSO is decompressed with `maxcso` first. |
-| GameCube, Wii | RVZ | Dolphin's native compressed format. Dolphin does not read CHD. |
+| GameCube, Wii | RVZ | Dolphin's native compressed format. Dolphin does not read CHD. An [NKit](https://wiki.dolphin-emu.org/index.php?title=NKit)-trimmed `Title.nkit.iso` converts the same way as a plain `.iso` - `rvz` matches on the file's final extension, which NKit's own naming leaves as `.iso` - and `dolphin-tool` (built from the same Dolphin tree that can already read an NKit image directly) reconstructs the trimmed junk data during conversion, so the resulting RVZ isn't itself an NKit image and carries none of its caveats (the NKit warning dialog, netplay/savestate incompatibility with a non-NKit copy). |
 | Xbox | XISO (`.xiso` or `.iso`) | Trimmed Xbox filesystem image. xemu does not read CHD or full Redump images. |
 | PS3 | Disc folder `Title.ps3/` or decrypted ISO | See [PS3](#ps3). |
 | N64 | `.z64` | Big-endian (native) byte order. |
@@ -728,7 +728,7 @@ works for every command, not just the ones without a `[...]` table:
 | Config key | Flag | Default when neither is set |
 |---|---|---|
 | `[library] root` | `-r`/`--root` | local RetroDECK install, else `.` |
-| `[naming] scheme` | `--scheme` | `keep` |
+| `[naming] scheme` | `--naming` | `keep` |
 | `[sync] host` | `--sync-host` | *(required for `sync`)* |
 | `[sync] user` | `--sync-user` | `deck` |
 | `[sync] path` | `--sync-path` | auto-discovered from the device |

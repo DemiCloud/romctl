@@ -45,21 +45,25 @@ func Check(lib *library.Library, systems []string, scheme actions.Scheme, verbos
 	esdeNames, _ := lib.ESDESystems()
 
 	phases := []cliutil.Phase{
-		{Label: string(audit.CategoryNaming), Fn: func() {
+		{Label: string(audit.CategoryNaming), Fn: func() bool {
 			cliutil.Parallel(systems, func(sys string) { checkNaming(report, lib, sys, scheme) })
+			return true
 		}},
-		{Label: string(audit.CategoryStructure), Fn: func() {
+		{Label: string(audit.CategoryStructure), Fn: func() bool {
 			cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
 			checkUnknownSystems(report, lib, systems)
+			return true
 		}},
-		{Label: string(audit.CategoryContainers), Fn: func() {
+		{Label: string(audit.CategoryContainers), Fn: func() bool {
 			cliutil.Parallel(systems, func(sys string) { checkContainers(report, lib, sys, esdeNames) })
+			return true
 		}},
-		{Label: string(audit.CategoryBios), Fn: func() {
+		{Label: string(audit.CategoryBios), Fn: func() bool {
 			checkBios(report, lib, systems)
+			return true
 		}},
 	}
-	cliutil.RunPhases(format, verbose, phases)
+	cliutil.RunPhases(format, verbose, false, phases)
 
 	if format.Structured() {
 		return !report.Failed(), report.Encode(os.Stdout, format)

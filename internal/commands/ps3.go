@@ -48,6 +48,11 @@ func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%sps3: %d unpacked, %d built, %d failed in %s%s\n", color, unpacked.Load(), built.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%sps3: %d unpacked, %d built, %d failed in %s%s\n", color, unpacked.Load(), built.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return failed.Load() == 0, nil
 }

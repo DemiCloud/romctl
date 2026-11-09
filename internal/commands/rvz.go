@@ -54,7 +54,7 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		}
 	}
 
-	cliutil.Progress(runner.Format, runner.Verbose, runner.DryRun, "rvz", len(jobs), func(tick func()) {
+	cliutil.Progress(runner.Format, runner.Verbose || runner.Quiet, runner.DryRun, "rvz", len(jobs), func(tick func()) {
 		cliutil.Parallel(jobs, func(j rvzJob) {
 			defer tick()
 			path := filepath.Join(lib.Roms, j.sys, j.base)
@@ -89,7 +89,12 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		return failed.Load() == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	fmt.Printf("%srvz: %d converted, %d failed in %s%s\n", color, converted.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	line := fmt.Sprintf("%srvz: %d converted, %d failed in %s%s\n", color, converted.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
 	return failed.Load() == 0, nil
 }
 

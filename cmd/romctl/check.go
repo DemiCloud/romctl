@@ -35,7 +35,7 @@ func newCheckCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("scheme", "", "")
+	cmd.Flags().String("naming", "", "")
 	return cmd
 }
 
@@ -107,36 +107,6 @@ func newBiosCmd() *cobra.Command {
 				return errSilentFailure
 			}
 			return nil
-		},
-	}
-}
-
-func newListCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:               "list [SYSTEM...|all]",
-		Short:             "list populated systems and game counts (-g for titles)",
-		Args:              cobra.ArbitraryArgs,
-		ValidArgsFunction: completeSystems,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			systems, err := resolveSystems(args)
-			if err != nil {
-				return err
-			}
-			showGames, _ := cmd.Flags().GetBool("games")
-			return commands.List(appCtx.lib, systems, showGames, appCtx.format)
-		},
-	}
-	cmd.Flags().BoolP("games", "g", false, "")
-	return cmd
-}
-
-func newSystemsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "systems",
-		Short: "list every known system and its class (not just populated ones)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return commands.Systems(appCtx.format)
 		},
 	}
 }
