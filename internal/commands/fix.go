@@ -93,7 +93,11 @@ func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, sc
 		{"snes", func() (bool, error) { return true, SNES(lib, runner, systems) }},
 		{"ps3", func() (bool, error) { return PS3(lib, runner, systems, scheme) }},
 		{"m3u", func() (bool, error) { return true, M3U(lib, runner, systems) }},
-		{"rename", func() (bool, error) { return true, Rename(lib, runner, systems, scheme, false, "", false) }},
+		// verifyDatSet=true pins verifyDat=false explicitly here - fix stays
+		// the fast, no-hashing pass it's always been; --verify-dat's
+		// cartridge-class default (see Rename's doc comment) is opt-in via
+		// the standalone rename command, not fix.
+		{"rename", func() (bool, error) { return true, Rename(lib, runner, systems, scheme, false, true, "", false) }},
 		{"saves", func() (bool, error) { return Saves(lib, runner, systems, savesDest) }},
 	}
 }

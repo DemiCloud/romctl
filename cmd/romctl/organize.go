@@ -19,10 +19,11 @@ func newRenameCmd() *cobra.Command {
 			return err
 		}
 		verifyDat, _ := cmd.Flags().GetBool("verify-dat")
+		verifyDatSet := cmd.Flags().Changed("verify-dat")
 		datDir, _ := cmd.Flags().GetString("dat-dir")
 		verifyCHD, _ := cmd.Flags().GetBool("verify-chd")
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
-			return true, commands.Rename(appCtx.lib, runner, systems, scheme, verifyDat, datDir, verifyCHD)
+			return true, commands.Rename(appCtx.lib, runner, systems, scheme, verifyDat, verifyDatSet, datDir, verifyCHD)
 		})
 	}
 	return cmd

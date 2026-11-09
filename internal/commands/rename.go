@@ -29,20 +29,95 @@ import (
 // that can't be confirmed still falls through to the same generic
 // cleanup a plain Rename would have done. Unlike identify's own
 // (removed) renaming, this is never additive-only: every file ends up
-// renamed one way or the other. Off by default - without it, Rename
-// never hashes anything and stays exactly as instant as it's always
-// been.
-func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, verifyDat bool, datDir string, verifyCHD bool) error {
-	if verifyDat {
-		return renameVerified(lib, runner, systems, scheme, datDir, verifyCHD)
+// renamed one way or the other.
+//
+// verifyDatSet reports whether --verify-dat was actually passed on the
+// command line (cmd.Flags().Changed), as opposed to merely false by
+// default. When it wasn't passed, Rename decides per system instead of
+// treating every system the same: cartridge-class systems (isCartridgeClass
+// - a few KB to a few MB per file) get --verify-dat's behavior anyway,
+// since hashing every file there costs nothing noticeable, while
+// disc/Dolphin/Xbox/PS3-class systems (hundreds of MB to several GB per
+// file) stay plain, the same reasoning `verify` was split out of `check`
+// for in the first place - a full hash pass folded invisibly into an
+// otherwise-instant command makes a long run indistinguishable from a
+// hang. Passing --verify-dat explicitly (either value) always wins over
+// this default, for every requested system.
+func Rename(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, verifyDat, verifyDatSet bool, datDir string, verifyCHD bool) error {
+	start := time.Now()
+	verifySystems, plainSystems := splitRenameSystems(systems, verifyDat, verifyDatSet)
+
+	var renamed, failed, skippedCHD int64
+	if len(plainSystems) > 0 {
+		r, f := renamePlain(lib, runner, plainSystems, scheme)
+		renamed += r
+		failed += f
 	}
-	return renamePlain(lib, runner, systems, scheme)
+	if len(verifySystems) > 0 {
+		r, f, sc, err := renameVerified(lib, runner, verifySystems, scheme, datDir, verifyCHD)
+		if err != nil {
+			return err
+		}
+		renamed += r
+		failed += f
+		skippedCHD += sc
+	}
+
+	if runner.Format.Structured() {
+		runner.SetCount("renamed", renamed)
+		runner.SetCount("failed", failed)
+		return nil
+	}
+	if skippedCHD > 0 {
+		fmt.Printf("rename: %d .chd file(s) not checked (pass --verify-chd to include them)\n", skippedCHD)
+	}
+	color, reset := cliutil.StatusColor(runner.Format, failed > 0)
+	line := fmt.Sprintf("%srename: %d renamed, %d failed in %s%s\n", color, renamed, failed, time.Since(start).Round(time.Second), reset)
+	if runner.Quiet {
+		runner.Summarize(line)
+	} else {
+		fmt.Print(line)
+	}
+	return nil
 }
 
-func renamePlain(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) error {
-	start := time.Now()
+// splitRenameSystems decides, per system, which of Rename's two paths
+// applies - see Rename's own doc comment for the reasoning.
+func splitRenameSystems(systems []string, verifyDat, verifyDatSet bool) (verify, plain []string) {
+	if verifyDatSet {
+		if verifyDat {
+			return systems, nil
+		}
+		return nil, systems
+	}
+	for _, sys := range systems {
+		if isCartridgeClass(systemdb.ClassOf(sys)) {
+			verify = append(verify, sys)
+		} else {
+			plain = append(plain, sys)
+		}
+	}
+	return verify, plain
+}
+
+// isCartridgeClass reports whether class's files are small enough that
+// splitRenameSystems' default can safely hash every one - the opposite
+// of every CHD/RVZ/XISO/PS3 disc-image class (isDiscClass plus Dolphin/
+// Xbox/PS3), whose files run from hundreds of MB to several GB each.
+func isCartridgeClass(class systemdb.Class) bool {
+	switch class {
+	case systemdb.ClassCart, systemdb.ClassN64, systemdb.ClassSNES:
+		return true
+	default:
+		return false
+	}
+}
+
+// renamePlain is Rename's instant path: no hashing, no DAT, just
+// scheme cleanup - used for every system splitRenameSystems routes here.
+func renamePlain(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (renamed, failed int64) {
 	log := cliutil.NewLogger("rename", runner.Format)
-	var renamed, failed atomic.Int64
+	var renamedCount, failedCount atomic.Int64
 	cliutil.Parallel(systems, func(sys string) {
 		if systemdb.ClassOf(sys) == systemdb.ClassArcade {
 			return
@@ -78,28 +153,16 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 			}
 			if err := actions.RenamePath(src, dst); err != nil {
 				log.Errf("rename failed: %s/%s: %v", sys, base, err)
-				failed.Add(1)
+				failedCount.Add(1)
 				continue
 			}
 			if err := gamelist.Rename(lib.Root, sys, base, clean+ext); err != nil {
 				log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 			}
-			renamed.Add(1)
+			renamedCount.Add(1)
 		}
 	})
-	if runner.Format.Structured() {
-		runner.SetCount("renamed", renamed.Load())
-		runner.SetCount("failed", failed.Load())
-		return nil
-	}
-	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	line := fmt.Sprintf("%srename: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
-	if runner.Quiet {
-		runner.Summarize(line)
-	} else {
-		fmt.Print(line)
-	}
-	return nil
+	return renamedCount.Load(), failedCount.Load()
 }
 
 // renameVerified is Rename's --verify-dat path: a per-system hash-and-
@@ -107,15 +170,13 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 // per-file rename loop renamePlain already has, so every file still gets
 // renamed - to its DAT name when confirmed, to a scheme-cleaned version
 // of its current name otherwise.
-func renameVerified(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, datDir string, verifyCHD bool) error {
-	start := time.Now()
+func renameVerified(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, datDir string, verifyCHD bool) (renamed, failed, skippedCHD int64, err error) {
 	log := cliutil.NewLogger("rename", runner.Format)
 
 	var chdmanPath string
 	if verifyCHD {
-		var err error
 		if chdmanPath, err = resolveCHDManIfNeeded(systems); err != nil {
-			return err
+			return 0, 0, 0, err
 		}
 	}
 
@@ -168,7 +229,7 @@ func renameVerified(lib *library.Library, runner *actions.Runner, systems []stri
 
 	verbose, format := runner.Verbose, runner.Format
 	live := verbose && cliutil.CanAnimate(format)
-	var renamed, failed, skippedCHD atomic.Int64
+	var renamedCount, failedCount, skippedCHDCount atomic.Int64
 	doneSoFar := 0
 	process := func(tick func()) {
 		for _, job := range jobs {
@@ -187,7 +248,7 @@ func renameVerified(lib *library.Library, runner *actions.Runner, systems []stri
 					}
 					if strings.ToLower(filepath.Ext(name)) == ".chd" {
 						if !verifyCHD || !isDiscClass(job.class) {
-							skippedCHD.Add(1)
+							skippedCHDCount.Add(1)
 							return true
 						}
 						hashes, err := hashDiscCHD(chdmanPath, filepath.Join(sysDir, name), job.class)
@@ -270,13 +331,13 @@ func renameVerified(lib *library.Library, runner *actions.Runner, systems []stri
 				}
 				if err := actions.RenamePath(src, dst); err != nil {
 					log.Errf("rename failed: %s/%s: %v", job.sys, base, err)
-					failed.Add(1)
+					failedCount.Add(1)
 					continue
 				}
 				if err := gamelist.Rename(lib.Root, job.sys, base, clean+ext); err != nil {
 					log.Errf("gamelist update failed: %s/%s: %v", job.sys, base, err)
 				}
-				renamed.Add(1)
+				renamedCount.Add(1)
 			}
 		}
 	}
@@ -287,25 +348,7 @@ func renameVerified(lib *library.Library, runner *actions.Runner, systems []stri
 		cliutil.Progress(format, false, false, "rename", total, process)
 	}
 
-	if !runner.Format.Structured() {
-		if n := skippedCHD.Load(); n > 0 {
-			fmt.Printf("rename: %d .chd file(s) not checked (pass --verify-chd to include them)\n", n)
-		}
-	}
-
-	if runner.Format.Structured() {
-		runner.SetCount("renamed", renamed.Load())
-		runner.SetCount("failed", failed.Load())
-		return nil
-	}
-	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
-	line := fmt.Sprintf("%srename: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
-	if runner.Quiet {
-		runner.Summarize(line)
-	} else {
-		fmt.Print(line)
-	}
-	return nil
+	return renamedCount.Load(), failedCount.Load(), skippedCHDCount.Load(), nil
 }
 
 func sameExists(dst, src string) (bool, error) {

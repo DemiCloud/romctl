@@ -33,7 +33,7 @@ const (
 	flagDest          = "      --dest DIR          saves: move into DIR/saves, DIR/states instead of the library root"
 	flagDatDir        = "      --dat-dir DIR       use DAT files from DIR instead of the embedded snapshot"
 	flagVerifyCHD     = "      --verify-chd        extract and hash-verify .chd files against the DAT too (needs chdman; slower)"
-	flagVerifyDat     = "      --verify-dat        hash-verify against a No-Intro/Redump DAT first; use its name when confirmed (slower)"
+	flagVerifyDat     = "      --verify-dat        hash-verify against a No-Intro/Redump DAT first; use its name when confirmed (default: on for cartridge systems, off for disc)"
 	flagMissing       = "      --missing           also report every DAT game you don't have (default: have/unverifiable only)"
 	flagRegion        = "      --region NAME       only compare games tagged with this region (repeatable; default: every region)"
 	flagHelp          = "  -h, --help              show this help"

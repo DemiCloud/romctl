@@ -220,7 +220,7 @@ falls back to disk when it isn't safe to use.
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
-| `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm. See [Naming](#naming). |
+| `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm - on by default for cartridge systems, off for disc. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
 | `m3u` | Group loose `Title (Disc N).chd`/`Title (Disc N).rvz` files into `Title.m3u/`. |
@@ -554,6 +554,14 @@ instead of reordering tags already in the filename; a file it can't
 confirm falls back to the same tag-reordering behavior as always. See
 [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat)
 for the same matching logic's read-only form.
+
+`--verify-dat` defaults to on for cartridge/handheld systems (a few KB to
+a few MB per file - hashing every one costs nothing noticeable) and off
+for disc/GameCube/Wii/Xbox/PS3-class systems (hundreds of MB to several
+GB per file - the same cost as a full `verify` pass, so it stays
+something you ask for). Passing `--verify-dat` or `--verify-dat=false`
+explicitly overrides this default for every system given, cartridge or
+disc alike.
 
 Independent of `scheme`:
 
