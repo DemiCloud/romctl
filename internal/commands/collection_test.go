@@ -83,6 +83,12 @@ func TestCollection(t *testing.T) {
 	if !strings.Contains(out, wantHash) {
 		t.Errorf("expected the have row's Hash column to show the CRC32 %s, got:\n%s", wantHash, out)
 	}
+	if !strings.Contains(out, "Nintendo Game Boy") {
+		t.Errorf("expected the System column to show the display name, not just the directory, got:\n%s", out)
+	}
+	if !strings.Contains(out, "gb") {
+		t.Errorf("expected the Directory column to still show the roms/ directory name, got:\n%s", out)
+	}
 }
 
 // TestCollectionHidesMissingByDefault guards --missing's whole point:

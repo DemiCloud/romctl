@@ -352,7 +352,11 @@ No-Intro (cartridge/handheld) or Redump (disc-based) DAT snapshot, reporting
 one row per known game: `have`, `missing`, or `unverifiable`. A DAT
 typically lists far more games than any one library actually has, so by
 default only `have`/`unverifiable` rows are reported; pass `--missing` to
-also list every game you don't have, for the full picture.
+also list every game you don't have, for the full picture. `System` is
+the human-readable display name (e.g. "Sony PlayStation"), the same one
+`system list` shows - `Directory` is the actual `roms/<Directory>/` name
+(e.g. `psx`), kept as its own column rather than overloading `System`
+with it.
 
 No DAT snapshot ships with romctl by default - see
 [Building the embedded tools yourself](#building-the-embedded-tools-yourself)'s

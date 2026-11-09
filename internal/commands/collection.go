@@ -20,16 +20,22 @@ import (
 )
 
 // collectionRow is one known game's shape for every output form, same
-// cliutil.RenderList convention as list/bios -v. Hash is the CRC32(s)
-// that actually confirmed a "have" row - blank for missing/unverifiable,
-// and joined the same way Matched is for a multi-ROM game (one hash per
+// cliutil.RenderList convention as list/bios -v and systemRecord
+// (systems.go): System is the human-readable display name
+// (systemdb.DisplayNameWith - preferring a live ES-DE systems.txt name
+// over the hand-ported systemdb.FullName table when one's present),
+// Directory the actual roms/<Directory>/ name, kept as its own column
+// rather than overloading System with it. Hash is the CRC32(s) that
+// actually confirmed a "have" row - blank for missing/unverifiable, and
+// joined the same way Matched is for a multi-ROM game (one hash per
 // matched file, same order).
 type collectionRow struct {
-	System  string `json:"system" yaml:"system" toml:"system" col:"System"`
-	Game    string `json:"game" yaml:"game" toml:"game" col:"Game"`
-	Status  string `json:"status" yaml:"status" toml:"status" col:"Status"` // "have", "missing", "unverifiable"
-	Matched string `json:"matched" yaml:"matched" toml:"matched" col:"Matched File"`
-	Hash    string `json:"hash" yaml:"hash" toml:"hash" col:"Hash"`
+	System    string `json:"system" yaml:"system" toml:"system" col:"System"`
+	Directory string `json:"directory" yaml:"directory" toml:"directory" col:"Directory"`
+	Game      string `json:"game" yaml:"game" toml:"game" col:"Game"`
+	Status    string `json:"status" yaml:"status" toml:"status" col:"Status"` // "have", "missing", "unverifiable"
+	Matched   string `json:"matched" yaml:"matched" toml:"matched" col:"Matched File"`
+	Hash      string `json:"hash" yaml:"hash" toml:"hash" col:"Hash"`
 }
 
 // Collection compares every given system's games against its embedded (or
@@ -79,6 +85,7 @@ type collectionRow struct {
 // either way.
 func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose, showMissing bool, format cliutil.Format) (bool, error) {
 	colors := cliutil.ColorsFor(format)
+	esdeNames, _ := lib.ESDESystems()
 	failed := false
 
 	var chdmanPath string
@@ -184,14 +191,15 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 				cliutil.Parallel(job.names, func(name string) { hashOne(name) })
 			}
 
+			display := systemdb.DisplayNameWith(job.sys, esdeNames)
 			for _, m := range job.df.Match(byCRC, byMD5, bySHA1) {
 				if !m.Have && !showMissing {
 					continue
 				}
-				rows = append(rows, collectionRowFor(job.sys, m, nameToCRC, colors))
+				rows = append(rows, collectionRowFor(job.sys, display, m, nameToCRC, colors))
 			}
 			for _, name := range unverifiable {
-				rows = append(rows, collectionRow{System: job.sys, Game: name, Status: statusColor("unverifiable", colors), Matched: "-", Hash: "-"})
+				rows = append(rows, collectionRow{System: display, Directory: job.sys, Game: name, Status: statusColor("unverifiable", colors), Matched: "-", Hash: "-"})
 			}
 		}
 	}
@@ -203,8 +211,8 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	}
 
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].System != rows[j].System {
-			return rows[i].System < rows[j].System
+		if rows[i].Directory != rows[j].Directory {
+			return rows[i].Directory < rows[j].Directory
 		}
 		return rows[i].Game < rows[j].Game
 	})
@@ -217,7 +225,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	return !failed, nil
 }
 
-func collectionRowFor(sys string, m datdb.MatchResult, nameToCRC map[string]string, colors cliutil.Colors) collectionRow {
+func collectionRowFor(sys, display string, m datdb.MatchResult, nameToCRC map[string]string, colors cliutil.Colors) collectionRow {
 	status, matched, hash := "missing", "-", "-"
 	if m.Have {
 		names := dedupStrings(m.Matched)
@@ -227,7 +235,7 @@ func collectionRowFor(sys string, m datdb.MatchResult, nameToCRC map[string]stri
 		}
 		status, matched, hash = "have", strings.Join(names, ", "), strings.Join(hashes, ", ")
 	}
-	return collectionRow{System: sys, Game: m.Game, Status: statusColor(status, colors), Matched: matched, Hash: hash}
+	return collectionRow{System: display, Directory: sys, Game: m.Game, Status: statusColor(status, colors), Matched: matched, Hash: hash}
 }
 
 // dedupStrings drops repeats while keeping first-seen order - a
