@@ -408,6 +408,12 @@ romctl: if the target name is already taken by a different file, the
 rename is skipped and logged, never overwritten. Takes the same
 `--dat-dir`/`--verify-chd` as `collection`.
 
+A non-structured run (Fancy/Plain) ends with a table of every match -
+file, game name, and the CRC32 that confirmed it - sorted so each system's
+rows sit together. `--limit N` caps that table at N rows per system
+without limiting how many files actually get renamed; a system that was
+truncated gets a one-line note naming how many more it had.
+
 It's its own command rather than a `rename` flag for the same reason
 `dupes`/`verify` are their own commands: hashing a whole library is
 occasionally expensive enough that folding it into `rename` - normally

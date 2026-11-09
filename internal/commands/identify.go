@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,21 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
+
+// identifyRow is one hash-confirmed rename's shape for the human-readable
+// table Identify prints when done - System first (so a multi-system run
+// still reads as "one table per system" once sorted/grouped), same
+// cliutil.RenderList convention as collectionRow. Hash is the matched
+// file's own CRC32, not necessarily the DAT field that actually proved
+// the match (Redump entries key on MD5/SHA1 when CRC is absent) - still
+// the most recognizable single value to show, and every hashed file has
+// one regardless of which field matched.
+type identifyRow struct {
+	System string `json:"system" yaml:"system" toml:"system" col:"System"`
+	File   string `json:"file" yaml:"file" toml:"file" col:"File"`
+	Game   string `json:"game" yaml:"game" toml:"game" col:"Game"`
+	Hash   string `json:"hash" yaml:"hash" toml:"hash" col:"Hash"`
+}
 
 // Identify hash-matches every given system's files against its embedded
 // (or --dat-dir-overridden) No-Intro/Redump DAT - the same matching
@@ -49,7 +65,7 @@ import (
 // verbose mode on a real terminal, one plain "[i/total] hash sys/file"
 // line per file in verbose mode otherwise, or an "identify: done/total"
 // counter by default.
-func Identify(lib *library.Library, runner *actions.Runner, systems []string, datDir string, verifyCHD bool, scheme actions.Scheme) (bool, error) {
+func Identify(lib *library.Library, runner *actions.Runner, systems []string, datDir string, verifyCHD bool, scheme actions.Scheme, limit int) (bool, error) {
 	start := time.Now()
 	log := cliutil.NewLogger("identify", runner.Format)
 
@@ -105,12 +121,14 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	verbose, format := runner.Verbose, runner.Format
 	live := verbose && cliutil.CanAnimate(format)
 	var renamed, failed atomic.Int64
+	var rows []identifyRow
 	doneSoFar := 0
 	process := func(tick func()) {
 		for _, job := range jobs {
 			sysDir := filepath.Join(lib.Roms, job.sys)
 			var mu sync.Mutex
 			byCRC, byMD5, bySHA1 := map[string]string{}, map[string]string{}, map[string]string{}
+			nameToCRC := map[string]string{}
 
 			hashOne := func(name string) bool {
 				defer tick()
@@ -126,6 +144,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 					mu.Lock()
 					for _, h := range hashes {
 						byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+						nameToCRC[name] = h.crc
 					}
 					mu.Unlock()
 					return true
@@ -136,6 +155,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 				}
 				mu.Lock()
 				byCRC[crc], byMD5[md5sum], bySHA1[sha1sum] = name, name, name
+				nameToCRC[name] = crc
 				mu.Unlock()
 				return true
 			}
@@ -192,7 +212,9 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 					log.Errf("collision, skipped: %s/%s -> %s%s", job.sys, name, clean, ext)
 					continue
 				}
+				row := identifyRow{System: job.sys, File: name, Game: gameName, Hash: strings.ToUpper(nameToCRC[name])}
 				if !runner.Act("identify %s/%s -> %s%s", job.sys, name, clean, ext) {
+					rows = append(rows, row)
 					continue
 				}
 				if err := actions.RenamePath(src, dst); err != nil {
@@ -204,6 +226,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 					log.Errf("gamelist update failed: %s/%s: %v", job.sys, name, err)
 				}
 				renamed.Add(1)
+				rows = append(rows, row)
 			}
 		}
 	}
@@ -219,6 +242,19 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		runner.SetCount("failed", failed.Load())
 		return !failedLoad && failed.Load() == 0, nil
 	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].System != rows[j].System {
+			return rows[i].System < rows[j].System
+		}
+		return rows[i].File < rows[j].File
+	})
+	shown, moreSystems, moreCounts := limitPerSystem(rows, limit)
+	cliutil.RenderList(os.Stdout, runner.Format, shown)
+	for _, sys := range moreSystems {
+		fmt.Printf("identify: %s: %d more match(es) not shown (--limit %d)\n", sys, moreCounts[sys], limit)
+	}
+
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
 	line := fmt.Sprintf("%sidentify: %d renamed, %d failed in %s%s\n", color, renamed.Load(), failed.Load(), time.Since(start).Round(time.Second), reset)
 	if runner.Quiet {
@@ -227,4 +263,31 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		fmt.Print(line)
 	}
 	return !failedLoad && failed.Load() == 0, nil
+}
+
+// limitPerSystem caps rows (already sorted by System) at limit entries per
+// system - a huge system's table would otherwise bury smaller ones below
+// it on a real terminal. limit <= 0 means unlimited. It also reports, per
+// system that got truncated and in the order each first appears, how many
+// more rows that system had, so the caller can note it instead of just
+// silently dropping them.
+func limitPerSystem(rows []identifyRow, limit int) (kept []identifyRow, truncatedOrder []string, more map[string]int) {
+	if limit <= 0 {
+		return rows, nil, nil
+	}
+	kept = make([]identifyRow, 0, len(rows))
+	more = map[string]int{}
+	seen := map[string]int{}
+	for _, r := range rows {
+		seen[r.System]++
+		if seen[r.System] <= limit {
+			kept = append(kept, r)
+			continue
+		}
+		if more[r.System] == 0 {
+			truncatedOrder = append(truncatedOrder, r.System)
+		}
+		more[r.System]++
+	}
+	return kept, truncatedOrder, more
 }

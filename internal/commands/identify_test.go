@@ -7,12 +7,25 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/library"
 )
+
+// gbGameXML renders one more <game> entry for a Game Boy DAT, for tests
+// that need several distinct matches in one file (writeIdentifyDat's own
+// extraGames parameter) rather than just the one it sets up directly.
+func gbGameXML(name string, content []byte) string {
+	hc, hm, hs := crc32.NewIEEE(), md5.New(), sha1.New()
+	hc.Write(content)
+	hm.Write(content)
+	hs.Write(content)
+	return fmt.Sprintf(`<game name="%s"><rom name="%s.gb" size="%d" crc="%08x" md5="%x" sha1="%x"/></game>`,
+		name, name, len(content), hc.Sum32(), hm.Sum(nil), hs.Sum(nil))
+}
 
 // writeIdentifyDat writes a Game Boy DAT with one game (named gameName,
 // matching haveContent's hash) plus any extraGames XML appended verbatim
@@ -60,7 +73,7 @@ func TestIdentifyRenamesMatchedFileThroughScheme(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeNoTag)
+	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeNoTag, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +99,7 @@ func TestIdentifySchemeKeepPreservesDatTags(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Pocket Monsters (Japan) (Rev 1)", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +115,7 @@ func TestIdentifyLeavesUnmatchedFileAlone(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Some Known Game", []byte("different-content-entirely"), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep)
+	ok, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +139,7 @@ func TestIdentifyCollisionSkipped(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +180,7 @@ func TestIdentifySkipsMultiROMMatch(t *testing.T) {
 	}
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +198,7 @@ func TestIdentifyDryRunRenamesNothing(t *testing.T) {
 	writeIdentifyDat(t, datDir, "Clean Game", []byte(content), "")
 
 	runner := &actions.Runner{Format: cliutil.FormatPlain, DryRun: true}
-	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep); err != nil {
+	if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,11 +217,68 @@ func TestIdentifySkipsArcade(t *testing.T) {
 	}
 	lib := library.Open(root)
 	runner := &actions.Runner{Format: cliutil.FormatPlain}
-	ok, err := Identify(lib, runner, []string{"arcade"}, "", false, actions.SchemeKeep)
+	ok, err := Identify(lib, runner, []string{"arcade"}, "", false, actions.SchemeKeep, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok {
 		t.Error("Identify reported failure for an arcade system, which it should skip entirely")
+	}
+}
+
+// TestIdentifyPrintsResultsTable guards the human-readable summary every
+// non-structured run should get: a table naming the matched file, the
+// game it was identified as, and the hash that proved it - not just the
+// final "N renamed" one-liner.
+func TestIdentifyPrintsResultsTable(t *testing.T) {
+	content := []byte("gb-rom-bytes-table")
+	lib, _ := newTestLib(t, map[string]string{"messy.gb": string(content)})
+	datDir := t.TempDir()
+	writeIdentifyDat(t, datDir, "Clean Game", content, "")
+
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	out := captureStdout(t, func() {
+		if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 0); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if !strings.Contains(out, "messy.gb") || !strings.Contains(out, "Clean Game") {
+		t.Errorf("expected the results table to list the matched file and game, got:\n%s", out)
+	}
+	wantHash := strings.ToUpper(fmt.Sprintf("%08x", crc32.ChecksumIEEE(content)))
+	if !strings.Contains(out, wantHash) {
+		t.Errorf("expected the results table to include the file's CRC32 %s, got:\n%s", wantHash, out)
+	}
+}
+
+// TestIdentifyLimitTruncatesPerSystem guards --limit: a system with more
+// matches than the limit should still rename everything (the limit only
+// caps the printed table), and note how many more rows it held back.
+func TestIdentifyLimitTruncatesPerSystem(t *testing.T) {
+	c1, c2, c3 := []byte("limit-content-one"), []byte("limit-content-two"), []byte("limit-content-three")
+	lib, sysDir := newTestLib(t, map[string]string{
+		"messy1.gb": string(c1),
+		"messy2.gb": string(c2),
+		"messy3.gb": string(c3),
+	})
+	datDir := t.TempDir()
+	extra := gbGameXML("Game Two", c2) + gbGameXML("Game Three", c3)
+	writeIdentifyDat(t, datDir, "Game One", c1, extra)
+
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	out := captureStdout(t, func() {
+		if _, err := Identify(lib, runner, []string{"gb"}, datDir, false, actions.SchemeKeep, 2); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if !strings.Contains(out, "1 more match(es) not shown (--limit 2)") {
+		t.Errorf("expected a truncation note for the 3rd match, got:\n%s", out)
+	}
+	for _, want := range []string{"Game One.gb", "Game Two.gb", "Game Three.gb"} {
+		if !exists(filepath.Join(sysDir, want)) {
+			t.Errorf("--limit must not stop a match from actually being renamed, missing %s", want)
+		}
 	}
 }

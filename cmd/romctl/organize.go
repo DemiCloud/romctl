@@ -27,6 +27,7 @@ func newIdentifyCmd() *cobra.Command {
 	cmd.Flags().String("naming", "", "")
 	cmd.Flags().String("dat-dir", "", "")
 	cmd.Flags().Bool("verify-chd", false, "")
+	cmd.Flags().Int("limit", 0, "")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		scheme, err := resolveScheme(cmd)
 		if err != nil {
@@ -34,8 +35,9 @@ func newIdentifyCmd() *cobra.Command {
 		}
 		datDir, _ := cmd.Flags().GetString("dat-dir")
 		verifyCHD, _ := cmd.Flags().GetBool("verify-chd")
+		limit, _ := cmd.Flags().GetInt("limit")
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
-			return commands.Identify(appCtx.lib, runner, systems, datDir, verifyCHD, scheme)
+			return commands.Identify(appCtx.lib, runner, systems, datDir, verifyCHD, scheme, limit)
 		})
 	}
 	return cmd
