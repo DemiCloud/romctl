@@ -14,6 +14,7 @@ reference; keep it in step with behavior changes.
 | Path | Purpose |
 |---|---|
 | `cmd/romctl/` | `spf13/cobra` command tree (one file per command/group - `root.go` is shared infra: `appContext`, the first-run/pending-cleanup machinery, `--format` resolution; `help.go` is the hand-tuned man-page-brief help renderer, bypassing cobra's own verbose default; everything else wires a `*cobra.Command` to its `internal/commands` function). `completion`/dynamic system-name completion come from cobra for free. The individual steps `fix` chains (`chd`, `rename`, ...) are built via `newHiddenStepCmd`, not `newMutatingCmd`: real, independently-runnable commands, just left out of the default `--help` listing (`fix`'s own one-liner already covers "what it runs"; `romctl help <name>` still works for any of them directly). |
+| `cmd/stage-dats/` | `make dats`'s thin wrapper over `internal/datdb.Stage` - a build-time maintainer tool, not part of any release, same "thin wrapper, real logic lives in `internal/`" convention as `cmd/romctl` itself. |
 | `internal/` | Everything else, one package per concern — see below. |
 | `Makefile` | `go build`/`test`/`vet` wrappers, plus fetching and building the four native tools (`chdman`, `dolphin-tool`, `extract-xiso`, `skyscraper`) into `internal/tools/data/<goos>_<goarch>/` for embedding. |
 | `.github/workflows/` | `ci.yml` (test/build matrix), `tools.yml` (native tool builds per platform), `release.yml` (assembles per-platform binaries from both, then publishes an actual GitHub Release with every one attached, via `softprops/action-gh-release`, on an actual tag push). |
@@ -177,18 +178,39 @@ talk of migrating off redump.org). Writing scraper/login code against
 either is a maintenance liability that breaks silently on the next layout
 change, for a correctness feature, not a build dependency.
 
-Instead: the maintainer downloads DAT packs by hand into
-`thirdparty/dats/no-intro/` and `thirdparty/dats/redump/` (file names
-matching each entry's `System` in `systemdb.Dat`), then runs `make dats`,
-which validates each file's `<header><name>` against that mapping and
-stages it into `internal/datdb/data/<provider>/` for embedding. No DAT
-snapshot is committed as of this writing — `internal/datdb/data/*/MANIFEST`
-are placeholders, same convention as `internal/tools/data/*/MANIFEST` for
-a platform with no native tool build yet. `romctl tools`'s second table
-reports, for a given build, which systems actually got a snapshot embedded
-and that snapshot's own header version/date — there's no separate version
-tracking, since staleness is a property of when `make dats` was last run,
-not something to duplicate here.
+Instead: the maintainer downloads whatever bulk pack each provider
+actually offers — No-Intro's Dat-o-Matic "Daily" aggregate turned out to
+be exactly this, a single zip with every system's DAT inside (confirmed
+against a real 2026-11-08 "No-Intro Love Pack (DAT)") — and unzips it
+as-is under `thirdparty/dats/no-intro/` and/or `thirdparty/dats/redump/`.
+No picking out or renaming individual files first: a real pack's
+filenames carry their own dynamic `"<pack name> (<timestamp>).dat"`
+suffix that changes release to release, and the same zip bundles hundreds
+of systems romctl doesn't track at all, so `make dats` (`go run
+./cmd/stage-dats`, thin wrapper over `internal/datdb.Stage`) is what
+matches each `systemdb.Dat` entry by pack name via glob (ignoring the
+timestamp), cross-checks the matched file's own `<header><name>` before
+trusting it, and stages only those into `internal/datdb/data/<provider>/`
+with the timestamp stripped — so `datdb.Load`'s own lookup can stay a
+plain exact match.
+
+No DAT snapshot is committed as of this writing —
+`internal/datdb/data/*/MANIFEST` are placeholders, same convention as
+`internal/tools/data/*/MANIFEST` for a platform with no native tool build
+yet (and the real `.dat` files are gitignored for the same reason the
+native tool binaries are — see `.gitignore`). `romctl tools`'s second
+table reports, for a given build, which systems actually got a snapshot
+embedded and that snapshot's own header version/date — there's no
+separate version tracking, since staleness is a property of when `make
+dats` was last run, not something to duplicate here.
+
+`systemdb.Dat`'s no-intro entries were cross-checked against that real
+pack listing; a few systems publish more than one DAT variant for
+different dump container formats (N64 BigEndian/ByteSwapped, NES
+Headered/Headerless, Atari Lynx/Jaguar's several formats, etc.) — picked
+to match romctl's own target format where one exists, otherwise a
+best-effort guess noted inline in `dat.go`. The redump entries are still
+unverified against a real Redump download.
 
 Two deliberate, lasting limitations, not TODOs:
 

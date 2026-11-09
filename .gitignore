@@ -1,6 +1,8 @@
 /thirdparty/
 /build/
 /dist/
+/.scratch/
+/scratch/
 
 # Built native tools staged for embedding (fetched/built by `make tools`);
 # the MANIFEST placeholders in these directories stay tracked.

@@ -105,19 +105,27 @@ much slower. To update a tool, bump its `*_REF` in the Makefile and run
 Only needed to build a release that has `romctl collection`'s have/missing
 data for one or more systems built in (`--dat-dir` works against your own
 DAT files either way, with no build step). Unlike the tools above, `make
-dats` doesn't fetch anything itself - download the current pack per system
-from [Dat-o-Matic](https://datomatic.no-intro.org) (No-Intro) and/or
-[Redump's downloads page](http://redump.org/downloads/), drop the `.dat`
-files under `thirdparty/dats/no-intro/` and `thirdparty/dats/redump/`
-(named exactly as each entry's provider pack name - see
-`internal/systemdb/dat.go`'s `Dat` map), then:
+dats` doesn't fetch anything itself:
+
+1. Download the current bulk pack - No-Intro's Dat-o-Matic "Daily"
+   aggregate ([datomatic.no-intro.org](https://datomatic.no-intro.org)) is
+   a single zip covering every system at once ("No-Intro Love Pack (DAT)
+   (*date*).zip"); use whatever [Redump's downloads
+   page](http://redump.org/downloads/) offers for disc-based systems.
+2. Unzip it, as-is, under `thirdparty/dats/no-intro/` and/or
+   `thirdparty/dats/redump/`. No need to pick out or rename individual
+   files - the pack bundles hundreds of systems romctl doesn't track, and
+   each file's own name carries a timestamp that changes release to
+   release; `make dats` matches and renames only what's actually needed.
+3. Run it:
 
 ```sh
 make dats    # validate and stage into internal/datdb/data/ for embedding
 ```
 
-See `AGENTS.md`'s "DAT snapshot status" for why this step is manual rather
-than automated.
+See `AGENTS.md`'s "DAT snapshot status" for the exact matching mechanism
+(`internal/datdb.Stage`) and why this step is manual rather than
+automated.
 
 ## Usage
 

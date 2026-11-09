@@ -169,37 +169,22 @@ tools-windows-amd64: $(VENDOR)/mame/.fetched $(VENDOR)/extract-xiso/.fetched ## 
 # bulk-download, and Redump's own hosting has shown signs of instability
 # (see AGENTS.md's "DAT snapshot status"). Instead:
 #
-#   1. Download the current Standard DAT pack per system from Dat-o-Matic
-#      (https://datomatic.no-intro.org) and/or the current datfile per
-#      system from Redump (http://redump.org/downloads/).
-#   2. Drop the .dat files under thirdparty/dats/no-intro/ and
-#      thirdparty/dats/redump/, named exactly as the System value in
-#      internal/systemdb/dat.go's Dat map for that entry (e.g.
-#      "Nintendo - Game Boy.dat") - datdb.Load keys on that exact name, so
-#      a mismatched filename just means "no DAT for this system" rather
-#      than silently loading the wrong one.
+#   1. Download the current bulk pack: No-Intro's own Dat-o-Matic "Daily"
+#      aggregate (https://datomatic.no-intro.org), a single zip covering
+#      every system at once ("No-Intro Love Pack (DAT) (<date>).zip"), and/
+#      or whatever Redump's downloads page (http://redump.org/downloads/)
+#      offers.
+#   2. Unzip it, as-is, under thirdparty/dats/no-intro/ and/or
+#      thirdparty/dats/redump/ - no need to pick out or rename individual
+#      files; `make dats` only stages the ones systemdb.Dat actually
+#      lists, matched by pack name regardless of that file's own dynamic
+#      "(<timestamp>)" suffix (see internal/datdb.Stage), and validates
+#      each one's own <header><name> before embedding it.
 #   3. Run `make dats`.
 #-------------------------------------------------------------------------------
 
-DATDB_DIR := internal/datdb/data
-DATS_SRC  := thirdparty/dats
-
 dats: ## Stage DAT files from thirdparty/dats/{no-intro,redump}/ for embedding
-	@set -e; \
-	staged=0; \
-	for provider in no-intro redump; do \
-	    mkdir -p $(DATDB_DIR)/$$provider; \
-	    for f in $(DATS_SRC)/$$provider/*.dat; do \
-	        [ -e "$$f" ] || continue; \
-	        grep -q '<header>' "$$f" || { echo "$$f doesn't look like a DAT (no <header>); skipping" >&2; exit 1; }; \
-	        install -m 644 "$$f" "$(DATDB_DIR)/$$provider/"; \
-	        echo "staged $$f"; \
-	        staged=$$((staged + 1)); \
-	    done; \
-	done; \
-	if [ $$staged -eq 0 ]; then \
-	    echo "no .dat files found under $(DATS_SRC)/{no-intro,redump}/ - see the comment above 'dats:' in this Makefile"; \
-	fi
+	go run ./cmd/stage-dats
 
 distclean: clean ## Remove build output AND fetched chdman/dolphin-tool/extract-xiso/skyscraper sources (several GB)
 	rm -rf $(VENDOR)
