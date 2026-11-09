@@ -61,7 +61,7 @@ func TestCollection(t *testing.T) {
 
 	lib := library.Open(root)
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, true, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestCollection(t *testing.T) {
 		t.Errorf("expected Have Game to be reported as have, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Missing Game") || !strings.Contains(out, "missing") {
-		t.Errorf("expected Missing Game to be reported as missing, got:\n%s", out)
+		t.Errorf("expected Missing Game to be reported as missing with --missing, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Some Disc.chd") || !strings.Contains(out, "unverifiable") {
 		t.Errorf("expected the .chd file to be reported as unverifiable, got:\n%s", out)
@@ -82,6 +82,42 @@ func TestCollection(t *testing.T) {
 	wantHash := strings.ToUpper(fmt.Sprintf("%08x", crc32.ChecksumIEEE(haveContent)))
 	if !strings.Contains(out, wantHash) {
 		t.Errorf("expected the have row's Hash column to show the CRC32 %s, got:\n%s", wantHash, out)
+	}
+}
+
+// TestCollectionHidesMissingByDefault guards --missing's whole point:
+// most DATs list far more games than any one library has, so a plain
+// `collection` run should only report have/unverifiable, not bury them
+// under every game you don't own.
+func TestCollectionHidesMissingByDefault(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "gb")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	haveContent := []byte("have-this-rom-2")
+	if err := os.WriteFile(filepath.Join(sysDir, "have.gb"), haveContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	datDir := t.TempDir()
+	writeDat(t, datDir, haveContent)
+
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, false, cliutil.FormatPlain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Collection reported failure")
+		}
+	})
+
+	if !strings.Contains(out, "Have Game") {
+		t.Errorf("expected Have Game to still be reported by default, got:\n%s", out)
+	}
+	if strings.Contains(out, "Missing Game") {
+		t.Errorf("expected Missing Game to be hidden without --missing, got:\n%s", out)
 	}
 }
 
@@ -93,7 +129,7 @@ func TestCollectionUnknownSystemSkipped(t *testing.T) {
 	lib := library.Open(root)
 
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"arcade"}, "", false, false, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"arcade"}, "", false, false, false, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}

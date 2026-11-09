@@ -34,7 +34,11 @@ type collectionRow struct {
 
 // Collection compares every given system's games against its embedded (or
 // --dat-dir-overridden) No-Intro/Redump DAT, reporting one row per known
-// game: have, missing, or unverifiable.
+// game: have, missing, or unverifiable. showMissing (--missing) controls
+// whether "missing" rows are included at all - most DATs list far more
+// games than any one library actually has, so by default Collection only
+// reports what you have (have/unverifiable); --missing adds every game
+// you don't, for the full picture.
 //
 // A system with no DatSource entry at all (arcade, and a few niches - see
 // systemdb.Dat) is silently skipped, same as a system with no games at
@@ -73,7 +77,7 @@ type collectionRow struct {
 // "[i/total] hash sys/file" line per file in verbose mode otherwise, or a
 // "collection: done/total" counter by default - across a worker pool
 // either way.
-func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose bool, format cliutil.Format) (bool, error) {
+func Collection(lib *library.Library, systems []string, datDir string, verifyCHD, verbose, showMissing bool, format cliutil.Format) (bool, error) {
 	colors := cliutil.ColorsFor(format)
 	failed := false
 
@@ -181,6 +185,9 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			}
 
 			for _, m := range job.df.Match(byCRC, byMD5, bySHA1) {
+				if !m.Have && !showMissing {
+					continue
+				}
 				rows = append(rows, collectionRowFor(job.sys, m, nameToCRC, colors))
 			}
 			for _, name := range unverifiable {

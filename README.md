@@ -349,7 +349,10 @@ instead, processed one at a time there to keep the printed order sane.
 
 `collection [SYSTEM...|all]` compares a system's games against an embedded
 No-Intro (cartridge/handheld) or Redump (disc-based) DAT snapshot, reporting
-one row per known game: `have`, `missing`, or `unverifiable`.
+one row per known game: `have`, `missing`, or `unverifiable`. A DAT
+typically lists far more games than any one library actually has, so by
+default only `have`/`unverifiable` rows are reported; pass `--missing` to
+also list every game you don't have, for the full picture.
 
 No DAT snapshot ships with romctl by default - see
 [Building the embedded tools yourself](#building-the-embedded-tools-yourself)'s

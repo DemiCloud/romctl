@@ -34,6 +34,7 @@ const (
 	flagDatDir        = "      --dat-dir DIR       use DAT files from DIR instead of the embedded snapshot"
 	flagVerifyCHD     = "      --verify-chd        extract and hash-verify .chd files against the DAT too (needs chdman; slower)"
 	flagVerifyDat     = "      --verify-dat        hash-verify against a No-Intro/Redump DAT first; use its name when confirmed (slower)"
+	flagMissing       = "      --missing           also report every DAT game you don't have (default: have/unverifiable only)"
 	flagHelp          = "  -h, --help              show this help"
 	flagVersion       = "      --version           show version"
 )
@@ -68,7 +69,7 @@ var commandTable = map[string]cmdInfo{
 	"bios":       {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagVerifyCHD, flagFormat}},
+	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagVerifyCHD, flagMissing, flagFormat}},
 	"identify":   {"identify one or more files against every No-Intro/Redump DAT (read-only)", "PATH...", []string{flagDatDir, flagFormat}},
 	"system":     {"system information (see 'system list', 'system games')", "", nil},
 	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
