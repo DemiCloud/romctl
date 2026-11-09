@@ -16,10 +16,16 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 )
 
-var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.chd$`)
+// discFileRE matches a loose disc-container file already in its system's
+// final, emulator-native format: .chd for CD/DVD/UMD-class systems, .rvz
+// for ClassDolphin (GameCube/Wii - they never go through CHD at all, see
+// rvz.go). A file still in its pre-conversion format (.bin, .iso, ...)
+// isn't grouped yet; check's "belongs in a .m3u directory" warning expects
+// chd/rvz to have already run first (see fixSteps' ordering in fix.go).
+var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.(chd|rvz)$`)
 
-// M3U groups loose "Title (Disc N).chd" files into a Title.m3u/ directory
-// with a playlist, for every system given.
+// M3U groups loose "Title (Disc N).chd"/"Title (Disc N).rvz" files into a
+// Title.m3u/ directory with a playlist, for every system given.
 func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 	start := time.Now()
 	log := cliutil.NewLogger("m3u", runner.Format)
@@ -34,6 +40,7 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 		type disc struct {
 			path string
 			num  int
+			ext  string
 		}
 		byTitle := map[string][]disc{}
 		for _, e := range entries {
@@ -42,7 +49,7 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 				continue
 			}
 			num, _ := strconv.Atoi(m[2])
-			byTitle[m[1]] = append(byTitle[m[1]], disc{path: filepath.Join(sysDir, e.Name()), num: num})
+			byTitle[m[1]] = append(byTitle[m[1]], disc{path: filepath.Join(sysDir, e.Name()), num: num, ext: m[3]})
 		}
 
 		titles := make([]string, 0, len(byTitle))
@@ -57,7 +64,11 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 				log.Errf("exists, skipped: %s/%s.m3u", sys, title)
 				continue
 			}
-			if !runner.Act("group %s/%s (Disc N).chd -> %s.m3u/", sys, title, title) {
+
+			discs := byTitle[title]
+			sort.Slice(discs, func(i, j int) bool { return discs[i].num < discs[j].num })
+
+			if !runner.Act("group %s/%s (Disc N).%s -> %s.m3u/", sys, title, discs[0].ext, title) {
 				continue
 			}
 			if err := os.Mkdir(dir, 0o755); err != nil {
@@ -66,13 +77,10 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 				continue
 			}
 
-			discs := byTitle[title]
-			sort.Slice(discs, func(i, j int) bool { return discs[i].num < discs[j].num })
-
 			playlist := filepath.Join(dir, title+".m3u")
 			var lines []string
 			for _, d := range discs {
-				name := fmt.Sprintf("%s (Disc %02d).chd", title, d.num)
+				name := fmt.Sprintf("%s (Disc %02d).%s", title, d.num, d.ext)
 				if err := os.Rename(d.path, filepath.Join(dir, name)); err != nil {
 					log.Errf("move failed: %s: %v", d.path, err)
 					continue

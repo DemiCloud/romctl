@@ -223,7 +223,7 @@ falls back to disk when it isn't safe to use.
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
-| `m3u` | Group loose `Title (Disc N).chd` files into `Title.m3u/`. |
+| `m3u` | Group loose `Title (Disc N).chd`/`Title (Disc N).rvz` files into `Title.m3u/`. |
 | `n64` | Normalize `.v64`/`.n64` byte orders to big-endian `.z64`. |
 | `snes` | Strip 512-byte copier headers; rename `.smc` to `.sfc`. |
 | `xiso` | Convert Xbox disc images to XISO: rename an already-valid one, or rebuild a full/redump dump. |
