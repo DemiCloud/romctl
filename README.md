@@ -216,7 +216,7 @@ falls back to disk when it isn't safe to use.
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
 | `collection` | Compare games against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT, reporting have/missing/unverifiable per game. Read-only. See [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat). |
-| `identify` | List every file hash-confirmed against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT - file, game, hash. Read-only; never renames anything. See [Identify: list DAT-confirmed files](#identify-list-dat-confirmed-files). |
+| `identify` | Identify one or more arbitrary files - not a system - against every embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT at once. Read-only; never renames anything. See [Identify: what is this file?](#identify-what-is-this-file). |
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
@@ -365,6 +365,8 @@ A game only counts as `have` when every ROM it needs (a multi-disc or
 multi-chip game can need more than one) is found among local files by
 CRC32/MD5/SHA1, matched whichever way the DAT entry itself provides -
 including inside a `.zip`/`.7z`/`.rar`, hashed without extracting to disk.
+A `have` row's `Hash` column is the CRC32(s) that actually confirmed it -
+the same value(s) `identify` would show for the same file(s).
 `.chd` files report as `unverifiable` by default, not matched or missing:
 no CHD metadata stores a hash that lines up with a Redump DAT entry
 (`chdman verify` only checks a CHD against itself). Pass `--verify-chd`
@@ -385,29 +387,30 @@ Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game
 (1G1R-style) the way a full ROM manager would.
 
-### Identify: list DAT-confirmed files
+### Identify: what is this file?
 
-`identify [SYSTEM...|all]` goes one step further than `collection`, but
-stays just as read-only: for every file it can hash-confirm against the
-DAT, it lists which file, which DAT game, and the hash that proved it -
-it never renames anything. A DAT `Game` with more than one `ROM` whose
-match spans more than one file, a hash shared by two different `Game`s,
-an arcade system, or a `.chd` (same "unverifiable" reasoning as
-`collection`, and the same `--verify-chd` to opt into checking a
-hash-confirmed disc instead) are all left off the table rather than
-guessed at. Takes the same `--dat-dir`/`--verify-chd` as `collection`.
+`collection` answers "for each known game, what's its status" - DAT-first.
+`identify PATH...` answers the opposite question, file-first: "what is
+this?" Point it at one or more arbitrary files (not a system - it doesn't
+need to be inside `roms/`, or even sorted into the right folder at all)
+and it hashes each one and checks it against *every* embedded (or
+`--dat-dir`-overridden) No-Intro/Redump DAT, not just one system's -
+that's the whole point, you don't have to already know what it is.
 
-The table - file, game name, the CRC32 that confirmed it - is sorted so
-each system's rows sit together. `--limit N` caps it at N rows per
-system; a system that was truncated gets a one-line note naming how many
-more it had. A run that skipped `.chd` files (no `--verify-chd`) says so
-and how many, so a CHD-converted library identifying nothing reads as
-"expected" rather than "did this even do anything."
+A `.chd` is handled automatically: `identify` reads its own header to
+tell a DVD-type CHD from a CD/GD-ROM-shaped one (the same byte-level
+detection `check` already uses to classify CHDs, see
+[Formats by system](#formats-by-system)) and extracts it with the right
+`chdman` command accordingly - no `--verify-chd` flag or system hint
+needed, since this command only ever handles a handful of files at a
+time, not a whole library's worth.
 
-Want a confirmed match renamed to its DAT name instead of just listed?
-That's `rename --verify-dat` (see [Naming](#naming)) - identify answers
-"what is this file," rename answers "what should it be called," and
-actually changing anything on disk is rename's job, not identify's.
+Every path gets a row - `System`/`Game` blank when nothing matched, so a
+miss is still visible rather than silently dropped from a multi-file run.
+Read-only: it never touches the checked file or anything else. To rename
+a confirmed match *inside your library*, that's `rename --verify-dat`
+(see [Naming](#naming)) - identify answers "what is this file," rename
+answers "what should it be called."
 
 ### Stray save files
 
@@ -537,7 +540,8 @@ against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT, it
 uses that DAT game's own name directly - still run through `scheme` -
 instead of reordering tags already in the filename; a file it can't
 confirm falls back to the same tag-reordering behavior as always. See
-[Identify: list DAT-confirmed files](#identify-list-dat-confirmed-files).
+[Collection: have/missing against a DAT](#collection-havemissing-against-a-dat)
+for the same matching logic's read-only form.
 
 Independent of `scheme`:
 
@@ -915,11 +919,12 @@ Notes:
 - **Full ROM-manager duties.** `collection` (see
   [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat))
   hash-matches a library against embedded No-Intro/Redump DAT snapshots,
-  `identify` (see [Identify: list DAT-confirmed files](#identify-list-dat-confirmed-files))
-  lists what each file actually is, and `rename --verify-dat` renames a
-  confirmed match to its DAT name - but none of these 1G1R-group, dedupe
-  across regions, or otherwise actively manage a collection the way a full
-  ROM manager would. Use a full ROM manager such as
+  `identify` (see [Identify: what is this file?](#identify-what-is-this-file))
+  identifies an arbitrary file against every embedded DAT at once, and
+  `rename --verify-dat` renames a confirmed match to its DAT name - but
+  none of these 1G1R-group, dedupe across regions, or otherwise actively
+  manage a collection the way a full ROM manager would. Use a full ROM
+  manager such as
   [Igir](https://igir.io/) for that.
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.

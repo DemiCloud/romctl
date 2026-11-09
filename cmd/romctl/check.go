@@ -142,20 +142,12 @@ func newCollectionCmd() *cobra.Command {
 
 func newIdentifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "identify [SYSTEM...|all]",
-		Short:             "list files hash-confirmed against a No-Intro/Redump DAT (read-only)",
-		Args:              cobra.ArbitraryArgs,
-		ValidArgsFunction: completeSystems,
+		Use:   "identify PATH...",
+		Short: "identify one or more files against every No-Intro/Redump DAT (read-only)",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			systems, err := resolveSystems(args)
-			if err != nil {
-				return err
-			}
-			verbose, _ := cmd.Flags().GetBool("verbose")
 			datDir, _ := cmd.Flags().GetString("dat-dir")
-			verifyCHD, _ := cmd.Flags().GetBool("verify-chd")
-			limit, _ := cmd.Flags().GetInt("limit")
-			ok, err := commands.Identify(appCtx.lib, systems, datDir, verifyCHD, verbose, appCtx.format, limit)
+			ok, err := commands.Identify(args, datDir, appCtx.format)
 			if err != nil {
 				return err
 			}
@@ -166,8 +158,6 @@ func newIdentifyCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("dat-dir", "", "")
-	cmd.Flags().Bool("verify-chd", false, "")
-	cmd.Flags().Int("limit", 0, "")
 	return cmd
 }
 

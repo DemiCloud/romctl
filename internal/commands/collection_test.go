@@ -79,6 +79,10 @@ func TestCollection(t *testing.T) {
 	if !strings.Contains(out, "Some Disc.chd") || !strings.Contains(out, "unverifiable") {
 		t.Errorf("expected the .chd file to be reported as unverifiable, got:\n%s", out)
 	}
+	wantHash := strings.ToUpper(fmt.Sprintf("%08x", crc32.ChecksumIEEE(haveContent)))
+	if !strings.Contains(out, wantHash) {
+		t.Errorf("expected the have row's Hash column to show the CRC32 %s, got:\n%s", wantHash, out)
+	}
 }
 
 func TestCollectionUnknownSystemSkipped(t *testing.T) {

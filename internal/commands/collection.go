@@ -20,12 +20,16 @@ import (
 )
 
 // collectionRow is one known game's shape for every output form, same
-// cliutil.RenderList convention as list/bios -v.
+// cliutil.RenderList convention as list/bios -v. Hash is the CRC32(s)
+// that actually confirmed a "have" row - blank for missing/unverifiable,
+// and joined the same way Matched is for a multi-ROM game (one hash per
+// matched file, same order).
 type collectionRow struct {
 	System  string `json:"system" yaml:"system" toml:"system" col:"System"`
 	Game    string `json:"game" yaml:"game" toml:"game" col:"Game"`
 	Status  string `json:"status" yaml:"status" toml:"status" col:"Status"` // "have", "missing", "unverifiable"
 	Matched string `json:"matched" yaml:"matched" toml:"matched" col:"Matched File"`
+	Hash    string `json:"hash" yaml:"hash" toml:"hash" col:"Hash"`
 }
 
 // Collection compares every given system's games against its embedded (or
@@ -127,6 +131,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			class := systemdb.ClassOf(job.sys)
 			var mu sync.Mutex
 			byCRC, byMD5, bySHA1 := map[string]string{}, map[string]string{}, map[string]string{}
+			nameToCRC := map[string]string{}
 			var unverifiable []string
 
 			hashOne := func(name string) bool {
@@ -139,6 +144,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 							mu.Lock()
 							for _, h := range hashes {
 								byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+								nameToCRC[name] = h.crc
 							}
 							mu.Unlock()
 							return true
@@ -156,6 +162,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 				}
 				mu.Lock()
 				byCRC[crc], byMD5[md5sum], bySHA1[sha1sum] = name, name, name
+				nameToCRC[name] = crc
 				mu.Unlock()
 				return true
 			}
@@ -174,10 +181,10 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			}
 
 			for _, m := range job.df.Match(byCRC, byMD5, bySHA1) {
-				rows = append(rows, collectionRowFor(job.sys, m, colors))
+				rows = append(rows, collectionRowFor(job.sys, m, nameToCRC, colors))
 			}
 			for _, name := range unverifiable {
-				rows = append(rows, collectionRow{System: job.sys, Game: name, Status: statusColor("unverifiable", colors), Matched: "-"})
+				rows = append(rows, collectionRow{System: job.sys, Game: name, Status: statusColor("unverifiable", colors), Matched: "-", Hash: "-"})
 			}
 		}
 	}
@@ -203,12 +210,17 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	return !failed, nil
 }
 
-func collectionRowFor(sys string, m datdb.MatchResult, colors cliutil.Colors) collectionRow {
-	status, matched := "missing", "-"
+func collectionRowFor(sys string, m datdb.MatchResult, nameToCRC map[string]string, colors cliutil.Colors) collectionRow {
+	status, matched, hash := "missing", "-", "-"
 	if m.Have {
-		status, matched = "have", strings.Join(dedupStrings(m.Matched), ", ")
+		names := dedupStrings(m.Matched)
+		hashes := make([]string, len(names))
+		for i, name := range names {
+			hashes[i] = strings.ToUpper(nameToCRC[name])
+		}
+		status, matched, hash = "have", strings.Join(names, ", "), strings.Join(hashes, ", ")
 	}
-	return collectionRow{System: sys, Game: m.Game, Status: statusColor(status, colors), Matched: matched}
+	return collectionRow{System: sys, Game: m.Game, Status: statusColor(status, colors), Matched: matched, Hash: hash}
 }
 
 // dedupStrings drops repeats while keeping first-seen order - a

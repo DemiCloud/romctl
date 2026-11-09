@@ -126,22 +126,51 @@ func Load(system, overrideDir string) (df *Datafile, ok bool, err error) {
 	if !has {
 		return nil, false, nil
 	}
+	df, err = LoadSource(src, overrideDir)
+	if err != nil {
+		return nil, true, fmt.Errorf("%s: %w", system, err)
+	}
+	return df, true, nil
+}
 
+// LoadSource reads and parses src directly, skipping Load's romctl
+// system-name lookup - for a caller that already has a DatSource in
+// hand, or wants every distinct one regardless of which romctl system
+// key(s) happen to share it (see DistinctSources; romctl identify's
+// by-path lookup checks each actual DAT exactly once rather than once
+// per alias - segacd/megacd/megacdjp all point at the same pack).
+func LoadSource(src systemdb.DatSource, overrideDir string) (*Datafile, error) {
 	var data []byte
+	var err error
 	if overrideDir != "" {
 		data, err = os.ReadFile(filepath.Join(overrideDir, filepath.FromSlash(dataPath(src))))
 	} else {
 		data, err = fs.ReadFile(embedded, "data/"+dataPath(src))
 	}
 	if err != nil {
-		return nil, true, fmt.Errorf("no DAT for %s (%s): %w", system, src.System, err)
+		return nil, fmt.Errorf("no DAT for %s: %w", src.System, err)
 	}
-
-	df, err = Parse(data)
+	df, err := Parse(data)
 	if err != nil {
-		return nil, true, fmt.Errorf("%s: %w", dataPath(src), err)
+		return nil, fmt.Errorf("%s: %w", dataPath(src), err)
 	}
-	return df, true, nil
+	return df, nil
+}
+
+// DistinctSources returns every DatSource systemdb.Dat maps to, with
+// duplicates (several romctl system keys sharing one pack, e.g. saturn/
+// saturnjp) collapsed to one entry each.
+func DistinctSources() []systemdb.DatSource {
+	seen := make(map[systemdb.DatSource]bool, len(systemdb.Dat))
+	out := make([]systemdb.DatSource, 0, len(systemdb.Dat))
+	for _, src := range systemdb.Dat {
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		out = append(out, src)
+	}
+	return out
 }
 
 // have reports whether every ROM in g has a matching hash in have (CRC32

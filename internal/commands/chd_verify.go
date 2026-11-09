@@ -27,6 +27,31 @@ func isDiscClass(class systemdb.Class) bool {
 	return class == systemdb.ClassCD || class == systemdb.ClassDVD || class == systemdb.ClassUMD
 }
 
+// hashDiscCHDByClassify extracts and hashes path the same way
+// hashDiscCHD does, but for a caller with no romctl system (and so no
+// systemdb.Class) to go on at all - identify's by-path lookup, which
+// only has the .chd file itself. chd.Classify reads the file's own
+// header/metadata chain to tell a DVD-type CHD from a CD/GD-ROM-shaped
+// one (see its doc comment, including chd.KindCDAsDVDMAGE - a DVD image
+// stored in a CD-type container, mechanically extracted the same way a
+// real CD is), so no class guess is needed; hashDiscCHD's own
+// class-driven dispatch is reused once that's settled, class standing in
+// only for "which chdman command", not an actual system identity.
+func hashDiscCHDByClassify(chdmanPath, path string) ([]discTrackHash, error) {
+	kind, err := chd.Classify(path)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case chd.KindDVD:
+		return hashDiscCHD(chdmanPath, path, systemdb.ClassDVD)
+	case chd.KindCD, chd.KindGD, chd.KindCDAsDVDMAGE:
+		return hashDiscCHD(chdmanPath, path, systemdb.ClassCD)
+	default:
+		return nil, fmt.Errorf("%s: not a current-version CHD (%s)", path, kind)
+	}
+}
+
 // resolveCHDManIfNeeded resolves chdman once, up front, only if at least
 // one of the given systems is disc-based - same "resolve before any
 // work, actionable error" invariant Verify already follows. Returns ""

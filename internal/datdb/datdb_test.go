@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/demicloud/romctl/internal/systemdb"
 )
 
 const sampleDat = `<?xml version="1.0"?>
@@ -126,5 +128,55 @@ func TestLoadOverrideDirMissingFile(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("Load: err = nil, want an error for a missing override file")
+	}
+}
+
+// TestLoadSourceMatchesLoad guards LoadSource against drifting from
+// Load's own behavior - identify's by-path lookup calls LoadSource
+// directly (it has no romctl system name to look up), so the two must
+// stay equivalent once a DatSource is in hand.
+func TestLoadSourceMatchesLoad(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "no-intro")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "Nintendo - Game Boy.dat"), []byte(sampleDat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	df, err := LoadSource(systemdb.DatSource{Provider: "no-intro", System: "Nintendo - Game Boy"}, dir)
+	if err != nil {
+		t.Fatalf("LoadSource: %v", err)
+	}
+	if len(df.Games) != 2 {
+		t.Fatalf("len(Games) = %d, want 2", len(df.Games))
+	}
+}
+
+func TestLoadSourceMissingFile(t *testing.T) {
+	if _, err := LoadSource(systemdb.DatSource{Provider: "redump", System: "Sony - PlayStation"}, t.TempDir()); err == nil {
+		t.Fatal("LoadSource: err = nil, want an error for a missing override file")
+	}
+}
+
+// TestDistinctSourcesDedupes guards the whole reason DistinctSources
+// exists: several romctl system keys (saturn/saturnjp, segacd/megacd/
+// megacdjp, ...) share one real DatSource - identify's by-path lookup
+// must only load and check each actual DAT once, not once per alias.
+func TestDistinctSourcesDedupes(t *testing.T) {
+	sources := DistinctSources()
+	seen := map[systemdb.DatSource]bool{}
+	for _, src := range sources {
+		if seen[src] {
+			t.Fatalf("duplicate DatSource in DistinctSources: %+v", src)
+		}
+		seen[src] = true
+	}
+	if !seen[systemdb.DatSource{Provider: "redump", System: "Sega - Saturn"}] {
+		t.Fatal("expected the Sega - Saturn DatSource (saturn/saturnjp's shared pack) to be present")
+	}
+	if len(sources) >= len(systemdb.Dat) {
+		t.Fatalf("len(sources) = %d, want fewer than len(systemdb.Dat) = %d (aliases should collapse)", len(sources), len(systemdb.Dat))
 	}
 }
