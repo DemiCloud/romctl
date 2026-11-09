@@ -6,6 +6,18 @@
 # tools.yml's darwin jobs don't run as part of this workflow's call to it
 # (see tools.yml's own header comment for why), so the darwin binaries
 # below always fall back.
+#
+# This workflow can never embed DAT snapshots (internal/datdb/data/ is
+# gitignored - see AGENTS.md's "DAT snapshot status"), so it's always a
+# strictly lesser build than one made locally with `make dats` already
+# run. The maintainer's usual flow is to build and publish that better
+# release locally, by hand, rather than wait on this - see this repo's
+# own notes on that. check-release below exists so that doesn't race
+# this workflow: if a release already exists for the pushed tag by the
+# time this runs, every other job here is skipped rather than rebuilding
+# and overwriting it with a worse one. This workflow still runs in full
+# for a tag nobody's released locally yet - e.g. pushed by a contributor
+# without that local setup - so it stays a real fallback, not dead code.
 name: Release
 
 on:
@@ -14,11 +26,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Check whether a release already exists for this tag
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   tools:
+    needs: check-release
+    if: needs.check-release.outputs.exists != 'true'
     uses: ./.github/workflows/tools.yml
 
   build:
-    needs: tools
+    needs: [check-release, tools]
+    if: needs.check-release.outputs.exists != 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -75,10 +110,11 @@ jobs:
   # platform's binary attached - build's own artifacts are just this
   # workflow's intermediate storage (expire, aren't a public download).
   # Skipped for a workflow_dispatch run with no tag (github.ref would be
-  # a branch, not something a release belongs to).
+  # a branch, not something a release belongs to), or when check-release
+  # found one already published for this tag.
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [check-release, build]
+    if: needs.check-release.outputs.exists != 'true' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
