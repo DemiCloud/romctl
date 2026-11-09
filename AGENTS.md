@@ -30,6 +30,7 @@ Key `internal/` packages:
 | `formats/chd`, `formats/iso9660`, `formats/xiso`, `formats/n64`, `formats/snes`, `formats/cso` | Pure-Go byte-level format detection, plus the ISO9660 writer (replaces `makeps3iso`) and CSO decompressor (replaces `maxcso`). |
 | `archive` | zip/7z/rar listing and extraction (replaces the external `7z` dependency). |
 | `tools` | Resolves `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper`: embedded-for-this-platform first, then `PATH`. CHD, RVZ and Xbox XDVDFS are complex, emulator-sensitive codecs not worth reimplementing; Skyscraper is a mature scraper not worth reimplementing either, see Scope boundaries. `AllStatuses` (`status.go`) reports the same embedded/PATH/missing resolution read-only, with no extraction or execution, for `romctl tools`. |
+| `datdb` | Embeds and parses No-Intro/Redump DAT snapshots (Logiqx XML: per-game CRC32/MD5/SHA1), staged by `make dats` from packs the maintainer downloads by hand (see "DAT snapshot status" below) — platform-agnostic, unlike `tools`' per-`GOOS`/`GOARCH` embedding, since a DAT file isn't a compiled binary. `systemdb.Dat` maps a romctl system directory name to the provider ("no-intro" or "redump") and that provider's own pack name; a system with no real DAT equivalent (arcade, a few CD/laserdisc niches) is left out, same convention as `SkyscraperPlatform`. `AllStatuses` (`status.go`) reports embedded/missing + each snapshot's own header version/date, read-only, for `romctl tools`'s second table. `commands.Collection` is the thin wrapper that actually hashes a library and matches it against `Load`'s result; see its doc comment for the CHD-unverifiable limitation. |
 | `executil`, `ttyguard` | Running external processes safely (stdin from the null device for `chdman`/`dolphin-tool`/`extract-xiso`; live-streamed for `rsync`/`ssh`), terminal state save/restore. |
 | `discimage` | Unpack-archive-then-build-plain-ISO9660, keyed by system class (a `Spec` table), not hardcoded to one command. PS3 is the only class registered today (RPCS3 doesn't read CHD, unlike every CD/DVD/UMD-class system); a future system needing the same treatment is a new `Spec`, not new logic. `commands.PS3` is a thin wrapper over it. |
 | `gamelist` | Keeps ES-DE's `gamelist.xml`/`downloaded_media` pointed at the right files when a rename/convert command moves a ROM that's already been scraped. A silent no-op when `ES-DE/` isn't present locally or the ROM was never scraped. Also used by `commands.Scrape` to correct Skyscraper's own path/media naming for `Title.m3u/` games (see that package's doc comment). |
@@ -165,12 +166,56 @@ working `romctl` for that platform — it just needs `chdman`/`dolphin-tool`/
 `extract-xiso`/`skyscraper` on `PATH` instead of embedded (see
 `internal/tools`).
 
+## DAT snapshot status
+
+Unlike the native tools above, DAT files aren't fetched or built by any
+`make` target that touches the network — see `internal/datdb`'s doc
+comment and this repo's earlier discussion for why: No-Intro needs a
+Dat-o-Matic session to bulk-download, and Redump's own hosting has shown
+signs of instability (a reported inactive-admin/infrastructure issue, with
+talk of migrating off redump.org). Writing scraper/login code against
+either is a maintenance liability that breaks silently on the next layout
+change, for a correctness feature, not a build dependency.
+
+Instead: the maintainer downloads DAT packs by hand into
+`thirdparty/dats/no-intro/` and `thirdparty/dats/redump/` (file names
+matching each entry's `System` in `systemdb.Dat`), then runs `make dats`,
+which validates each file's `<header><name>` against that mapping and
+stages it into `internal/datdb/data/<provider>/` for embedding. No DAT
+snapshot is committed as of this writing — `internal/datdb/data/*/MANIFEST`
+are placeholders, same convention as `internal/tools/data/*/MANIFEST` for
+a platform with no native tool build yet. `romctl tools`'s second table
+reports, for a given build, which systems actually got a snapshot embedded
+and that snapshot's own header version/date — there's no separate version
+tracking, since staleness is a property of when `make dats` was last run,
+not something to duplicate here.
+
+Two deliberate, lasting limitations, not TODOs:
+
+- **CHD-converted disc ROMs report as "unverifiable," not matched.** No
+  CHD metadata stores a per-track hash that lines up with a Redump DAT
+  entry (`chdman verify` only checks a CHD against itself), and
+  re-extracting every `.chd` back to raw tracks to re-hash was ruled out as
+  slow, disk-heavy, and not even guaranteed byte-exact for multi-track CDs.
+  Cartridge systems (No-Intro) are unaffected — they're never
+  CHD-converted — so `romctl collection` gives them a real have/missing
+  verdict.
+- **No parent/clone (1G1R) grouping.** Every DAT entry — including every
+  region/revision/translation variant — is its own row in `romctl
+  collection`'s output.
+
 ## Scope boundaries
 
 - Format conversion, naming, structure validation, BIOS presence/hash checks
-  and sync are in scope.
-- Dump verification against DATs, DRM decryption and sourcing of ROMs or
-  firmware are out of scope.
+  and sync are in scope. So is comparing a library's games against a known-
+  games database by hash (`romctl collection`, backed by embedded No-Intro/
+  Redump DAT snapshots — see `internal/datdb`); this used to be out of
+  scope over concern about the ongoing maintenance of fetching/scraping DAT
+  sources at runtime, not a principled objection to the feature — embedding
+  a periodically-refreshed snapshot (see "DAT snapshot status" below)
+  sidesteps that concern, at the cost of the snapshot going stale between
+  romctl releases.
+- DRM decryption and sourcing of ROMs or firmware are out of scope.
 - Scraping (querying ScreenScraper and writing gamelist.xml/media) is in
   scope, but romctl never talks to a scraper API itself: writing a
   ScreenScraper client was evaluated and declined, since `devid`/

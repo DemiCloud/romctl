@@ -1,0 +1,5 @@
+placeholder: no Redump DAT snapshots staged yet.
+Download the current datfile per system from Redump
+(http://redump.org/downloads/), drop the .dat files under
+thirdparty/dats/redump/, then run `make dats`, or pass --dat-dir to
+romctl collection to use your own DAT files without embedding anything.

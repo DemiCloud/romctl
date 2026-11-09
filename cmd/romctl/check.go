@@ -111,6 +111,33 @@ func newBiosCmd() *cobra.Command {
 	}
 }
 
+func newCollectionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "collection [SYSTEM...|all]",
+		Short:             "compare games against a No-Intro/Redump DAT (read-only)",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeSystems,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			systems, err := resolveSystems(args)
+			if err != nil {
+				return err
+			}
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			datDir, _ := cmd.Flags().GetString("dat-dir")
+			ok, err := commands.Collection(appCtx.lib, systems, datDir, verbose, appCtx.format)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errSilentFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("dat-dir", "", "")
+	return cmd
+}
+
 func newToolsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tools",

@@ -9,7 +9,7 @@ RELEASE_LDFLAGS := $(LDFLAGS) -s -w
 # Target platforms for `make release`
 PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
 
-.PHONY: build test vet release clean help tools tools-windows-amd64 fetch-mame fetch-dolphin distclean
+.PHONY: build test vet release clean help tools tools-windows-amd64 fetch-mame fetch-dolphin distclean dats
 
 .DEFAULT_GOAL := help
 
@@ -161,6 +161,45 @@ tools-windows-amd64: $(VENDOR)/mame/.fetched $(VENDOR)/extract-xiso/.fetched ## 
 	cd $(VENDOR)/extract-xiso && $(MINGW64_PREFIX)gcc -O2 -DNO_FTP -std=gnu89 -fcommon \
 		-o extract-xiso.exe extract-xiso.c -lws2_32
 	install -m 755 $(VENDOR)/extract-xiso/extract-xiso.exe $(DATADIR)/windows_amd64/extract-xiso.exe
+
+#-------------------------------------------------------------------------------
+# romctl-specific: staging No-Intro/Redump DAT snapshots for embedding via
+# go:embed (internal/datdb). Deliberately NOT fetched automatically, unlike
+# the native tools above: No-Intro needs a Dat-o-Matic session to
+# bulk-download, and Redump's own hosting has shown signs of instability
+# (see AGENTS.md's "DAT snapshot status"). Instead:
+#
+#   1. Download the current Standard DAT pack per system from Dat-o-Matic
+#      (https://datomatic.no-intro.org) and/or the current datfile per
+#      system from Redump (http://redump.org/downloads/).
+#   2. Drop the .dat files under thirdparty/dats/no-intro/ and
+#      thirdparty/dats/redump/, named exactly as the System value in
+#      internal/systemdb/dat.go's Dat map for that entry (e.g.
+#      "Nintendo - Game Boy.dat") - datdb.Load keys on that exact name, so
+#      a mismatched filename just means "no DAT for this system" rather
+#      than silently loading the wrong one.
+#   3. Run `make dats`.
+#-------------------------------------------------------------------------------
+
+DATDB_DIR := internal/datdb/data
+DATS_SRC  := thirdparty/dats
+
+dats: ## Stage DAT files from thirdparty/dats/{no-intro,redump}/ for embedding
+	@set -e; \
+	staged=0; \
+	for provider in no-intro redump; do \
+	    mkdir -p $(DATDB_DIR)/$$provider; \
+	    for f in $(DATS_SRC)/$$provider/*.dat; do \
+	        [ -e "$$f" ] || continue; \
+	        grep -q '<header>' "$$f" || { echo "$$f doesn't look like a DAT (no <header>); skipping" >&2; exit 1; }; \
+	        install -m 644 "$$f" "$(DATDB_DIR)/$$provider/"; \
+	        echo "staged $$f"; \
+	        staged=$$((staged + 1)); \
+	    done; \
+	done; \
+	if [ $$staged -eq 0 ]; then \
+	    echo "no .dat files found under $(DATS_SRC)/{no-intro,redump}/ - see the comment above 'dats:' in this Makefile"; \
+	fi
 
 distclean: clean ## Remove build output AND fetched chdman/dolphin-tool/extract-xiso/skyscraper sources (several GB)
 	rm -rf $(VENDOR)

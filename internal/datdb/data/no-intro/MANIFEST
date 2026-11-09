@@ -1,0 +1,5 @@
+placeholder: no No-Intro DAT snapshots staged yet.
+Download the current Standard DAT pack per system from Dat-o-Matic
+(https://datomatic.no-intro.org), drop the .dat files under
+thirdparty/dats/no-intro/, then run `make dats`, or pass --dat-dir to
+romctl collection to use your own DAT files without embedding anything.

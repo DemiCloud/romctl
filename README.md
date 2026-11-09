@@ -100,6 +100,25 @@ native Linux filesystem; building on a mounted Windows or network share is
 much slower. To update a tool, bump its `*_REF` in the Makefile and run
 `make distclean tools`.
 
+#### Embedding DAT snapshots
+
+Only needed to build a release that has `romctl collection`'s have/missing
+data for one or more systems built in (`--dat-dir` works against your own
+DAT files either way, with no build step). Unlike the tools above, `make
+dats` doesn't fetch anything itself - download the current pack per system
+from [Dat-o-Matic](https://datomatic.no-intro.org) (No-Intro) and/or
+[Redump's downloads page](http://redump.org/downloads/), drop the `.dat`
+files under `thirdparty/dats/no-intro/` and `thirdparty/dats/redump/`
+(named exactly as each entry's provider pack name - see
+`internal/systemdb/dat.go`'s `Dat` map), then:
+
+```sh
+make dats    # validate and stage into internal/datdb/data/ for embedding
+```
+
+See `AGENTS.md`'s "DAT snapshot status" for why this step is manual rather
+than automated.
+
 ## Usage
 
 ```
@@ -188,6 +207,7 @@ falls back to disk when it isn't safe to use.
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
+| `collection` | Compare games against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT, reporting have/missing/unverifiable per game. Read-only. See [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat). |
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
@@ -205,7 +225,7 @@ falls back to disk when it isn't safe to use.
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
-| `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither - see [Requirements](#requirements). |
+| `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
 
 Typical session:
 
@@ -315,6 +335,38 @@ Verbose output with no real terminal to animate on (plain/structured
 output, or redirected to a file) falls back to one plain
 `[i/total] hash sys/file` / `[i/total] verify sys/file` line per file
 instead, processed one at a time there to keep the printed order sane.
+
+### Collection: have/missing against a DAT
+
+`collection [SYSTEM...|all]` compares a system's games against an embedded
+No-Intro (cartridge/handheld) or Redump (disc-based) DAT snapshot, reporting
+one row per known game: `have`, `missing`, or `unverifiable`.
+
+No DAT snapshot ships with romctl by default - see
+[Building the embedded tools yourself](#building-the-embedded-tools-yourself)'s
+sibling step, `make dats`, which stages DAT files the maintainer downloaded by
+hand (from [Dat-o-Matic](https://datomatic.no-intro.org) and
+[Redump](http://redump.org/downloads/)) for embedding. `romctl tools`'s
+second table reports which systems actually have a snapshot embedded in a
+given build, and that snapshot's own version/date. Pass `--dat-dir DIR` to
+use your own DAT files (same `<provider>/<System name>.dat` layout) instead
+of - or in addition to systems the embedded set doesn't cover.
+
+A game only counts as `have` when every ROM it needs (a multi-disc or
+multi-chip game can need more than one) is found among local files by
+CRC32/MD5/SHA1, matched whichever way the DAT entry itself provides -
+including inside a `.zip`/`.7z`/`.rar`, hashed without extracting to disk.
+`.chd` files report as `unverifiable`, not matched or missing: no CHD
+metadata stores a hash that lines up with a Redump DAT entry (`chdman
+verify` only checks a CHD against itself), so there's nothing to compare
+against without re-extracting the whole disc image back to raw tracks -
+slow, and not even guaranteed byte-exact for multi-track CDs. This only
+affects disc-based systems; cartridge systems are never CHD-converted, so
+they always get a real have/missing verdict.
+
+Every DAT entry - including every region/revision/translation variant - is
+its own row; `collection` doesn't group regional variants of the same game
+(1G1R-style) the way a full ROM manager would.
 
 ### Stray save files
 
@@ -813,9 +865,12 @@ Notes:
 
 ## Out of scope
 
-- **Dump verification.** `check` validates structure, not dump quality. Verify
-  ROMs against No-Intro and Redump DATs with a ROM manager such as
-  [Igir](https://igir.io/).
+- **Full ROM-manager duties.** `collection` (see
+  [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat))
+  hash-matches a library against embedded No-Intro/Redump DAT snapshots, but
+  it doesn't 1G1R-group, rename files to DAT-canonical names, or otherwise
+  manage a collection. Use a full ROM manager such as
+  [Igir](https://igir.io/) for that.
 - **Headerless Atari 7800 ROMs.** ProSystem identifies them by checksum; replace
   with headered No-Intro `.a78` dumps if a game misbehaves.
 - **Picking one region's dump over another.** `dupes` only catches

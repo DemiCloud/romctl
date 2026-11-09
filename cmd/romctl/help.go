@@ -31,6 +31,7 @@ const (
 	flagScrapeUser    = "      --scrape-user ID:PW ScreenScraper account (default: [scrape] user)"
 	flagScrapeThreads = "      --scrape-threads N  scrape thread count (default: [scrape] threads, else auto)"
 	flagDest          = "      --dest DIR          saves: move into DIR/saves, DIR/states instead of the library root"
+	flagDatDir        = "      --dat-dir DIR       use DAT files from DIR instead of the embedded snapshot"
 	flagHelp          = "  -h, --help              show this help"
 	flagVersion       = "      --version           show version"
 )
@@ -44,7 +45,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "dupes", "verify", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
+	"check", "bios", "dupes", "verify", "collection", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "tools",
 }
 
@@ -57,33 +58,34 @@ var commandGroups = []struct {
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Other:", []string{"bios", "dupes", "verify", "system", "scrape", "clean", "tools"}},
+	{"Other:", []string{"bios", "dupes", "verify", "collection", "system", "scrape", "clean", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
-	"check":    {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagNaming, flagFormat}},
-	"bios":     {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"dupes":    {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"verify":   {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
-	"system":   {"system information (see 'system list', 'system games')", "", nil},
-	"list":     {"list every known system, its directory, and its class", "", []string{flagFormat}},
-	"games":    {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
-	"fix":      {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDest, flagFormat}},
-	"rename":   {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
-	"unpack":   {"extract single-file archives (cartridge/N64/SNES/GC/Wii/Xbox)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"chd":      {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
-	"m3u":      {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"n64":      {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"snes":     {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"xiso":     {"convert Xbox disc images to XISO", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"rvz":      {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"ps3":      {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
-	"saves":    {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest, flagFormat}},
-	"relocate": {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
-	"scrape":   {"fetch game metadata/media via Skyscraper", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
-	"clean":    {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
-	"sync":     {"mirror roms/bios/media to a device", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
-	"tools":    {"report native tool availability", "", []string{flagFormat}},
+	"check":      {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagNaming, flagFormat}},
+	"bios":       {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
+	"collection": {"compare games against a No-Intro/Redump DAT (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagDatDir, flagFormat}},
+	"system":     {"system information (see 'system list', 'system games')", "", nil},
+	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
+	"games":      {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
+	"fix":        {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDest, flagFormat}},
+	"rename":     {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
+	"unpack":     {"extract single-file archives (cartridge/N64/SNES/GC/Wii/Xbox)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"chd":        {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
+	"m3u":        {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"n64":        {"normalize N64 ROMs to big-endian .z64", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"snes":       {"strip copier headers; rename .smc to .sfc", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"xiso":       {"convert Xbox disc images to XISO", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"rvz":        {"convert GameCube/Wii images to RVZ", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"ps3":        {"unpack PS3 archives, then build ISOs from disc folders", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
+	"saves":      {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest, flagFormat}},
+	"relocate":   {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
+	"scrape":     {"fetch game metadata/media via Skyscraper", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
+	"clean":      {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
+	"sync":       {"mirror roms/bios/media to a device", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
+	"tools":      {"report native tool availability", "", []string{flagFormat}},
 }
 
 // printHelp is root's HelpFunc/UsageFunc: the root overview (grouped
