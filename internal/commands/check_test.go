@@ -35,6 +35,29 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(out)
 }
 
+// captureStderr is captureStdout's os.Stderr counterpart, for diagnostics
+// (e.g. printDatLoadIssues) that deliberately write there instead of
+// os.Stdout.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
 // scratchLibrary builds a minimal on-disk library covering a finding in
 // each category the naming/structure/containers split (see check.go) now
 // handles separately, plus a missing-BIOS finding: psx (class cd) gets a

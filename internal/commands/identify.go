@@ -84,20 +84,19 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		df    *datdb.Datafile
 	}
 	var jobs []sysJob
+	var datIssues []datLoadRow
 	total := 0
-	failedLoad := false
 	for _, sys := range systems {
 		class := systemdb.ClassOf(sys)
 		if class == systemdb.ClassArcade {
 			continue
 		}
-		df, ok, err := datdb.Load(sys, datDir)
+		df, ok, issue := loadDat(sys, datDir)
 		if !ok {
 			continue
 		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "identify: %s: %v\n", sys, err)
-			failedLoad = true
+		if issue != nil {
+			datIssues = append(datIssues, *issue)
 			continue
 		}
 		if verifyCHD && isDiscClass(class) {
@@ -117,6 +116,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 		jobs = append(jobs, sysJob{sys, class, names, df})
 		total += len(names)
 	}
+	printDatLoadIssues("identify", datIssues)
 
 	verbose, format := runner.Verbose, runner.Format
 	live := verbose && cliutil.CanAnimate(format)
@@ -240,19 +240,21 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	if runner.Format.Structured() {
 		runner.SetCount("renamed", renamed.Load())
 		runner.SetCount("failed", failed.Load())
-		return !failedLoad && failed.Load() == 0, nil
+		return len(datIssues) == 0 && failed.Load() == 0, nil
 	}
 
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].System != rows[j].System {
-			return rows[i].System < rows[j].System
+	if len(rows) > 0 {
+		sort.SliceStable(rows, func(i, j int) bool {
+			if rows[i].System != rows[j].System {
+				return rows[i].System < rows[j].System
+			}
+			return rows[i].File < rows[j].File
+		})
+		shown, moreSystems, moreCounts := limitPerSystem(rows, limit)
+		cliutil.RenderList(os.Stdout, runner.Format, shown)
+		for _, sys := range moreSystems {
+			fmt.Printf("identify: %s: %d more match(es) not shown (--limit %d)\n", sys, moreCounts[sys], limit)
 		}
-		return rows[i].File < rows[j].File
-	})
-	shown, moreSystems, moreCounts := limitPerSystem(rows, limit)
-	cliutil.RenderList(os.Stdout, runner.Format, shown)
-	for _, sys := range moreSystems {
-		fmt.Printf("identify: %s: %d more match(es) not shown (--limit %d)\n", sys, moreCounts[sys], limit)
 	}
 
 	color, reset := cliutil.StatusColor(runner.Format, failed.Load() > 0)
@@ -262,7 +264,7 @@ func Identify(lib *library.Library, runner *actions.Runner, systems []string, da
 	} else {
 		fmt.Print(line)
 	}
-	return !failedLoad && failed.Load() == 0, nil
+	return len(datIssues) == 0 && failed.Load() == 0, nil
 }
 
 // limitPerSystem caps rows (already sorted by System) at limit entries per

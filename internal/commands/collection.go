@@ -87,14 +87,15 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		df    *datdb.Datafile
 	}
 	var jobs []sysJob
+	var datIssues []datLoadRow
 	total := 0
 	for _, sys := range systems {
-		df, ok, err := datdb.Load(sys, datDir)
+		df, ok, issue := loadDat(sys, datDir)
 		if !ok {
 			continue
 		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "collection: %s: %v\n", sys, err)
+		if issue != nil {
+			datIssues = append(datIssues, *issue)
 			failed = true
 			continue
 		}
@@ -115,6 +116,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		jobs = append(jobs, sysJob{sys, names, df})
 		total += len(names)
 	}
+	printDatLoadIssues("collection", datIssues)
 
 	live := verbose && cliutil.CanAnimate(format)
 	var rows []collectionRow
@@ -193,8 +195,10 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		return rows[i].Game < rows[j].Game
 	})
 
-	if err := cliutil.RenderList(os.Stdout, format, rows); err != nil {
-		return false, err
+	if format.Structured() || len(rows) > 0 {
+		if err := cliutil.RenderList(os.Stdout, format, rows); err != nil {
+			return false, err
+		}
 	}
 	return !failed, nil
 }
