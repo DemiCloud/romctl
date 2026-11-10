@@ -52,3 +52,16 @@ func printDatLoadIssues(cmd string, issues []datLoadRow) {
 	fmt.Fprintf(os.Stderr, "%s: DAT not available for %d system(s):\n", cmd, len(issues))
 	cliutil.RenderList(os.Stderr, cliutil.FormatPlain, issues)
 }
+
+// printNoDatSystems renders systems (if any) with no DatSource mapping
+// at all - distinct from printDatLoadIssues' "mapped but not staged"
+// case, and never a run failure: collection still lists whatever files
+// exist for one of these (see listOnlyRows), just with no have/missing
+// verdict to give them.
+func printNoDatSystems(cmd string, systems []datLoadRow) {
+	if len(systems) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: no DAT coverage for %d system(s), listing files only:\n", cmd, len(systems))
+	cliutil.RenderList(os.Stderr, cliutil.FormatPlain, systems)
+}

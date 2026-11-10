@@ -217,6 +217,46 @@ func TestCollectionUnknownSystemSkipped(t *testing.T) {
 		}
 	})
 	if strings.Contains(out, "arcade") {
-		t.Errorf("expected arcade (no DatSource entry) to produce no rows, got:\n%s", out)
+		t.Errorf("expected arcade (no DatSource entry, no files) to produce no rows, got:\n%s", out)
+	}
+}
+
+// TestCollectionListsFilesForSystemWithNoDat is the fix for
+// `collection fbneo` silently returning nothing: a system with no
+// DatSource entry at all must still list what's actually on disk (as
+// "no dat" rows, since there's no have/missing verdict to give them),
+// and explain why on stderr rather than leaving an empty result
+// indistinguishable from "you own nothing".
+func TestCollectionListsFilesForSystemWithNoDat(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "fbneo")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysDir, "sf2.zip"), []byte("arcade-set"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	out := captureStdout(t, func() {
+		ok, err := Collection(lib, []string{"fbneo"}, "", false, false, false, nil, cliutil.FormatPlain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Collection reported failure for a system with no DAT coverage")
+		}
+	})
+	if !strings.Contains(out, "sf2") || !strings.Contains(out, "no dat") {
+		t.Errorf("expected sf2.zip listed with a \"no dat\" status, got:\n%s", out)
+	}
+
+	errOut := captureStderr(t, func() {
+		if _, err := Collection(lib, []string{"fbneo"}, "", false, false, false, nil, cliutil.FormatPlain); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(errOut, "fbneo") || !strings.Contains(errOut, "no DAT coverage") {
+		t.Errorf("expected a stderr note explaining fbneo has no DAT coverage, got:\n%s", errOut)
 	}
 }

@@ -48,12 +48,17 @@ type collectionRow struct {
 // you don't, for the full picture.
 //
 // A system with no DatSource entry at all (arcade, and a few niches - see
-// systemdb.Dat) is silently skipped, same as a system with no games at
-// all would be; a system with an entry but no DAT actually staged (the
-// common case until `make dats` has been run - see the embedded data
-// directories' MANIFEST placeholders) gets a one-line note printed to
-// stderr instead of failing the whole run, so asking for "all" still
-// reports every system that does have coverage.
+// systemdb.Dat) still lists whatever files are actually there, each as a
+// "no dat" row (see listOnlyRows) - there's no have/missing verdict to
+// give them, but an empty result with no explanation at all previously
+// looked identical to "you own nothing," which it isn't. printNoDatSystems
+// notes which systems these were, same side-channel-to-stderr treatment
+// printDatLoadIssues already gives "entry exists, nothing staged yet" -
+// neither counts as a run failure (see failed). A system with an entry
+// but no DAT actually staged (the common case until `make dats` has been
+// run - see the embedded data directories' MANIFEST placeholders) gets
+// its own one-line note the same way, so asking for "all" still reports
+// every system that does have coverage.
 //
 // CHD-converted files report as "unverifiable" by default: no CHD
 // metadata stores a hash that lines up with a Redump DAT entry (chdman
@@ -108,10 +113,14 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	}
 	var jobs []sysJob
 	var datIssues []datLoadRow
+	var noDatSystems []datLoadRow
+	var noDatRows []collectionRow
 	total := 0
 	for _, sys := range systems {
 		df, ok, issue := loadDat(sys, datDir)
 		if !ok {
+			noDatSystems = append(noDatSystems, datLoadRow{System: sys, Issue: "no DAT coverage for this system (e.g. arcade - see AGENTS.md)"})
+			noDatRows = append(noDatRows, listOnlyRows(lib, sys, esdeNames, colors)...)
 			continue
 		}
 		if issue != nil {
@@ -138,6 +147,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 		total += len(names)
 	}
 	printDatLoadIssues("collection", datIssues)
+	printNoDatSystems("collection", noDatSystems)
 
 	live := verbose && cliutil.CanAnimate(format)
 	var rows []collectionRow
@@ -215,6 +225,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	} else {
 		cliutil.Progress(format, false, false, "collection", total, process)
 	}
+	rows = append(rows, noDatRows...)
 
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Directory != rows[j].Directory {
@@ -286,6 +297,30 @@ func filterRegion(df *datdb.Datafile, wanted []string) *datdb.Datafile {
 		}
 	}
 	return out
+}
+
+// listOnlyRows lists every hashable file in sys's directory with no DAT
+// to compare it against (systemdb.Dat has no entry at all - see
+// Collection's own doc comment, arcade being the common case). Each row
+// carries the bare filename as both Game and Matched, since there's no
+// canonical DAT name to show instead, and a "no dat" status distinct
+// from have/missing/unverifiable - this was never attempted, not failed.
+func listOnlyRows(lib *library.Library, sys string, esdeNames map[string]string, colors cliutil.Colors) []collectionRow {
+	entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
+	if err != nil {
+		return nil
+	}
+	display := systemdb.DisplayNameWith(sys, esdeNames)
+	var rows []collectionRow
+	for _, e := range entries {
+		if e.IsDir() || !hashable(e.Name()) {
+			continue
+		}
+		name := e.Name()
+		game := strings.TrimSuffix(name, filepath.Ext(name))
+		rows = append(rows, collectionRow{System: display, Directory: sys, Game: game, Status: statusColor("no dat", colors), Matched: name, Hash: "-"})
+	}
+	return rows
 }
 
 func collectionRowFor(sys, display string, m datdb.MatchResult, nameToCRC map[string]string, colors cliutil.Colors) collectionRow {

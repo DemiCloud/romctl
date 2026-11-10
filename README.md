@@ -358,6 +358,16 @@ the human-readable display name (e.g. "Sony PlayStation"), the same one
 (e.g. `psx`), kept as its own column rather than overloading `System`
 with it.
 
+Arcade systems (`fbneo`, `mame`, ...) have no DAT at all - MAME-family
+ROM sets are catalogued by driver-specific, version-pinned metadata, not
+a flat per-dump hash list the way No-Intro/Redump publish, and there's no
+reliable way to source or stay in sync with that for romctl to use (see
+[Out of scope](#out-of-scope)). Rather than return nothing with no
+explanation, `collection` lists whatever files are actually in that
+system's directory with a `no dat` status (no have/missing verdict
+possible) and prints a one-line stderr note saying why - it's just never
+compared against anything.
+
 No DAT snapshot ships with romctl by default - see
 [Building the embedded tools yourself](#building-the-embedded-tools-yourself)'s
 sibling step, `make dats`, which stages DAT files the maintainer downloaded by
@@ -957,6 +967,15 @@ Notes:
   byte-for-byte identical files; it doesn't single out one region's dump
   of the same game, which needs No-Intro/Redump-style clone-group data.
   That's on you, same as naming tags - see [Naming](#naming).
+- **Arcade DAT coverage.** `collection`/`identify` have no No-Intro/Redump
+  equivalent for `fbneo`/`mame`/etc.: MAME-family ROM sets are multi-file
+  zips with parent/BIOS dependencies between them, catalogued by driver
+  metadata pinned to a specific emulator core version rather than a flat,
+  permanent per-dump hash list - a materially different (and harder to
+  get right) problem than hashing a single cartridge or disc dump. MAME
+  itself can audit its own sets directly (`mame -verifyroms`, checked
+  against whatever core version you're actually running), which romctl
+  doesn't reimplement or wrap.
 
 ## License
 
