@@ -221,15 +221,17 @@ func TestCollectionUnknownSystemSkipped(t *testing.T) {
 	}
 }
 
-// TestCollectionListsFilesForSystemWithNoDat is the fix for
-// `collection fbneo` silently returning nothing: a system with no
-// DatSource entry at all must still list what's actually on disk (as
+// TestCollectionListsFilesForSystemWithNoDat is the fix for a system
+// with no DAT coverage at all (e.g. `collection naomi`) silently
+// returning nothing: it must still list what's actually on disk (as
 // "no dat" rows, since there's no have/missing verdict to give them),
 // and explain why on stderr rather than leaving an empty result
-// indistinguishable from "you own nothing".
+// indistinguishable from "you own nothing". naomi (not fbneo - see
+// systemdb.Dat, fbneo has real coverage now) is a ClassArcade system
+// with genuinely no DatSource entry.
 func TestCollectionListsFilesForSystemWithNoDat(t *testing.T) {
 	root := t.TempDir()
-	sysDir := filepath.Join(root, "roms", "fbneo")
+	sysDir := filepath.Join(root, "roms", "naomi")
 	if err := os.MkdirAll(sysDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +241,7 @@ func TestCollectionListsFilesForSystemWithNoDat(t *testing.T) {
 	lib := library.Open(root)
 
 	out := captureStdout(t, func() {
-		ok, err := Collection(lib, []string{"fbneo"}, "", false, false, false, nil, cliutil.FormatPlain)
+		ok, err := Collection(lib, []string{"naomi"}, "", false, false, false, nil, cliutil.FormatPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,11 +254,11 @@ func TestCollectionListsFilesForSystemWithNoDat(t *testing.T) {
 	}
 
 	errOut := captureStderr(t, func() {
-		if _, err := Collection(lib, []string{"fbneo"}, "", false, false, false, nil, cliutil.FormatPlain); err != nil {
+		if _, err := Collection(lib, []string{"naomi"}, "", false, false, false, nil, cliutil.FormatPlain); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(errOut, "fbneo") || !strings.Contains(errOut, "no DAT coverage") {
-		t.Errorf("expected a stderr note explaining fbneo has no DAT coverage, got:\n%s", errOut)
+	if !strings.Contains(errOut, "naomi") || !strings.Contains(errOut, "no DAT coverage") {
+		t.Errorf("expected a stderr note explaining naomi has no DAT coverage, got:\n%s", errOut)
 	}
 }

@@ -40,14 +40,28 @@ type collectionRow struct {
 }
 
 // Collection compares every given system's games against its embedded (or
-// --dat-dir-overridden) No-Intro/Redump DAT, reporting one row per known
-// game: have, missing, or unverifiable. showMissing (--missing) controls
-// whether "missing" rows are included at all - most DATs list far more
-// games than any one library actually has, so by default Collection only
-// reports what you have (have/unverifiable); --missing adds every game
-// you don't, for the full picture.
+// --dat-dir-overridden) No-Intro/Redump/FBNeo DAT, reporting one row per
+// known game: have, missing, or unverifiable. showMissing (--missing)
+// controls whether "missing" rows are included at all - most DATs list
+// far more games than any one library actually has, so by default
+// Collection only reports what you have (have/unverifiable); --missing
+// adds every game you don't, for the full picture.
 //
-// A system with no DatSource entry at all (arcade, and a few niches - see
+// fbneo is the one ClassArcade system with real coverage (see
+// systemdb.Dat): every file entry inside an arcade zip gets its own hash
+// (hashArcadeEntries), fed into the same system-wide byCRC/byMD5/bySHA1
+// pool every other system already builds. This resolves the FBNeo DAT's
+// pervasive parent/clone ROM sharing (most arcade games there declare a
+// romof/cloneof parent whose zip holds some of their ROMs) for free, with
+// no explicit romof/cloneof parsing: a clone's "missing" ROM is already
+// in the pool as long as its parent's zip is also present in the
+// directory being scanned. Hash isn't populated for these rows (shown as
+// "-"): a single outer zip name maps to dozens of different per-chip
+// CRCs, so there's no one meaningful value the way there is for a
+// cartridge dump or CD track.
+//
+// A system with no DatSource entry at all (every other ClassArcade
+// system, and a few niches - see
 // systemdb.Dat) still lists whatever files are actually there, each as a
 // "no dat" row (see listOnlyRows) - there's no have/missing verdict to
 // give them, but an empty result with no explanation at all previously
@@ -164,6 +178,18 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			hashOne := func(name string) bool {
 				defer tick()
 				path := filepath.Join(sysDir, name)
+				if class == systemdb.ClassArcade {
+					hashes, err := hashArcadeEntries(path)
+					if err != nil {
+						return false
+					}
+					mu.Lock()
+					for _, h := range hashes {
+						byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+					}
+					mu.Unlock()
+					return true
+				}
 				if strings.ToLower(filepath.Ext(name)) == ".chd" {
 					if verifyCHD && isDiscClass(class) {
 						hashes, err := hashDiscCHD(chdmanPath, path, class)
@@ -329,7 +355,10 @@ func collectionRowFor(sys, display string, m datdb.MatchResult, nameToCRC map[st
 		names := dedupStrings(m.Matched)
 		hashes := make([]string, len(names))
 		for i, name := range names {
-			hashes[i] = strings.ToUpper(nameToCRC[name])
+			hashes[i] = "-"
+			if crc := nameToCRC[name]; crc != "" {
+				hashes[i] = strings.ToUpper(crc)
+			}
 		}
 		status, matched, hash = "have", strings.Join(names, ", "), strings.Join(hashes, ", ")
 	}
@@ -361,6 +390,43 @@ func statusColor(status string, colors cliutil.Colors) string {
 	default:
 		return colors.Yellow + status + colors.Reset
 	}
+}
+
+// hashArcadeEntries hashes every file entry inside path (a multi-ROM
+// arcade .zip/.7z/.rar) - unlike hashROM/hashArchiveROM below, which
+// assume a single-file archive (a cartridge or disc dump zipped up
+// whole), an arcade set's zip holds one file per ROM chip, every one of
+// which needs its own hash to match against an FBNeo-shaped DAT's
+// per-chip crc list (see systemdb.Dat's "fbneo" entry). Reuses
+// discTrackHash (chd_verify.go) as a generic hash-triple despite its
+// CD-sounding name - it's just {crc, md5sum, sha1sum}, nothing
+// disc-specific about the type itself.
+func hashArcadeEntries(path string) ([]discTrackHash, error) {
+	a, err := archive.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer a.Close()
+	entries, err := a.Entries()
+	if err != nil {
+		return nil, err
+	}
+	hashes := make([]discTrackHash, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name, "/") || e.Name == "" {
+			continue
+		}
+		hc, hm, hs := crc32.NewIEEE(), md5.New(), sha1.New()
+		if err := a.Extract(e.Name, io.MultiWriter(hc, hm, hs)); err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", path, e.Name, err)
+		}
+		hashes = append(hashes, discTrackHash{
+			crc:     fmt.Sprintf("%08x", hc.Sum32()),
+			md5sum:  fmt.Sprintf("%x", hm.Sum(nil)),
+			sha1sum: fmt.Sprintf("%x", hs.Sum(nil)),
+		})
+	}
+	return hashes, nil
 }
 
 // hashROM returns path's lowercase-hex CRC32/MD5/SHA1, streamed in one

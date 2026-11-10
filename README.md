@@ -215,8 +215,8 @@ falls back to disk when it isn't safe to use.
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
-| `collection` | Compare games against an embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT, reporting have/missing/unverifiable per game. Read-only. See [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat). |
-| `identify` | Identify one or more arbitrary files - not a system - against every embedded (or `--dat-dir`-overridden) No-Intro/Redump DAT at once. Read-only; never renames anything. See [Identify: what is this file?](#identify-what-is-this-file). |
+| `collection` | Compare games against an embedded (or `--dat-dir`-overridden) No-Intro/Redump/FBNeo DAT, reporting have/missing/unverifiable per game. Read-only. See [Collection: have/missing against a DAT](#collection-havemissing-against-a-dat). |
+| `identify` | Identify one or more arbitrary files - not a system - against every embedded (or `--dat-dir`-overridden) No-Intro/Redump/FBNeo DAT at once. Read-only; never renames anything. See [Identify: what is this file?](#identify-what-is-this-file). |
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
@@ -234,7 +234,7 @@ falls back to disk when it isn't safe to use.
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
-| `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
+| `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump/FBNeo DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
 
 Typical session:
 
@@ -348,35 +348,42 @@ instead, processed one at a time there to keep the printed order sane.
 ### Collection: have/missing against a DAT
 
 `collection [SYSTEM...|all]` compares a system's games against an embedded
-No-Intro (cartridge/handheld) or Redump (disc-based) DAT snapshot, reporting
-one row per known game: `have`, `missing`, or `unverifiable`. A DAT
-typically lists far more games than any one library actually has, so by
-default only `have`/`unverifiable` rows are reported; pass `--missing` to
-also list every game you don't have, for the full picture. `System` is
-the human-readable display name (e.g. "Sony PlayStation"), the same one
-`system list` shows - `Directory` is the actual `roms/<Directory>/` name
-(e.g. `psx`), kept as its own column rather than overloading `System`
-with it.
+No-Intro (cartridge/handheld), Redump (disc-based), or FBNeo (arcade - see
+below) DAT snapshot, reporting one row per known game: `have`, `missing`,
+or `unverifiable`. A DAT typically lists far more games than any one
+library actually has, so by default only `have`/`unverifiable` rows are
+reported; pass `--missing` to also list every game you don't have, for
+the full picture. `System` is the human-readable display name (e.g. "Sony
+PlayStation"), the same one `system list` shows - `Directory` is the
+actual `roms/<Directory>/` name (e.g. `psx`), kept as its own column
+rather than overloading `System` with it.
 
-Arcade systems (`fbneo`, `mame`, ...) have no DAT at all - MAME-family
-ROM sets are catalogued by driver-specific, version-pinned metadata, not
-a flat per-dump hash list the way No-Intro/Redump publish, and there's no
-reliable way to source or stay in sync with that for romctl to use (see
+`fbneo` is covered via [FinalBurn Neo's own repo
+DAT](https://github.com/libretro/FBNeo/tree/master/dats/) - a real
+have/missing verdict per game, same as any other system. Its `Hash`
+column is always `-`: an arcade zip holds one file per ROM chip rather
+than a single dump, so there's no one CRC32 that means "this file,"
+unlike a cartridge or disc dump. Every *other* arcade system (`mame`,
+`naomi`, `cps`, ...) still has no DAT at all - MAME-family ROM sets are
+catalogued by driver-specific, version-pinned metadata, and there's no
+equivalent trustworthy, version-matched DAT sourced for them yet (see
 [Out of scope](#out-of-scope)). Rather than return nothing with no
-explanation, `collection` lists whatever files are actually in that
-system's directory with a `no dat` status (no have/missing verdict
-possible) and prints a one-line stderr note saying why - it's just never
-compared against anything.
+explanation, `collection` lists whatever files are actually in one of
+those systems' directories with a `no dat` status (no have/missing
+verdict possible) and prints a one-line stderr note saying why - it's
+just never compared against anything.
 
 No DAT snapshot ships with romctl by default - see
 [Building the embedded tools yourself](#building-the-embedded-tools-yourself)'s
 sibling step, `make dats`, which stages DAT files the maintainer downloaded by
-hand (from [Dat-o-Matic](https://datomatic.no-intro.org) and
-[Redump](http://redump.org/downloads/)) for embedding. `romctl tools`'s
-second table reports which systems actually have a snapshot embedded in a
-given build, and that snapshot's own version/date. Pass `--dat-dir DIR` to
-use your own DAT files (same `<provider>/<System name>.dat` layout) instead
-of - or in addition to systems the embedded set doesn't cover.
+hand (from [Dat-o-Matic](https://datomatic.no-intro.org),
+[Redump](http://redump.org/downloads/), and - for `fbneo` -
+[FBNeo's own repo](https://github.com/libretro/FBNeo/tree/master/dats/))
+for embedding. `romctl tools`'s second table reports which systems
+actually have a snapshot embedded in a given build, and that snapshot's
+own version/date. Pass `--dat-dir DIR` to use your own DAT files (same
+`<provider>/<System name>.dat` layout) instead of - or in addition to
+systems the embedded set doesn't cover.
 
 A game only counts as `have` when every ROM it needs (a multi-disc or
 multi-chip game can need more than one) is found among local files by
@@ -404,6 +411,16 @@ this disc type, and reproducing Redump's own split-track layout from
 that output isn't just a flag away - real-world reports describe needing
 a separate reconstruction pass this package doesn't implement. Every
 other CD/DVD/UMD-class system is unaffected.
+
+For `fbneo`, a clone set's zip routinely omits ROMs that are shared with
+its parent set (most FBNeo games declare a parent this way). `collection`
+resolves this without any special-case logic: every file inside *every*
+zip in the directory gets hashed into one shared pool for the whole
+system before any game is checked, so a clone's "missing" ROM is already
+there as long as its parent's zip is also present - `Matched` for a
+clone correctly lists both zip names when this happens. If the parent's
+zip genuinely isn't in your library, the clone correctly reports
+`missing`, not a false `have`.
 
 Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game
@@ -967,12 +984,13 @@ Notes:
   byte-for-byte identical files; it doesn't single out one region's dump
   of the same game, which needs No-Intro/Redump-style clone-group data.
   That's on you, same as naming tags - see [Naming](#naming).
-- **Arcade DAT coverage.** `collection`/`identify` have no No-Intro/Redump
-  equivalent for `fbneo`/`mame`/etc.: MAME-family ROM sets are multi-file
-  zips with parent/BIOS dependencies between them, catalogued by driver
-  metadata pinned to a specific emulator core version rather than a flat,
-  permanent per-dump hash list - a materially different (and harder to
-  get right) problem than hashing a single cartridge or disc dump. MAME
+- **Arcade DAT coverage beyond `fbneo`.** `fbneo` has real `collection`
+  coverage (see above), sourced from FinalBurn Neo's own repo DAT rather
+  than No-Intro/Redump. Every *other* arcade core - MAME proper, Naomi,
+  CPS, and the rest of `ClassArcade` - still has none: MAME-family ROM
+  sets are catalogued by driver metadata pinned to a specific emulator
+  core version rather than a flat, permanent per-dump hash list, and
+  there's no equivalent trustworthy DAT source lined up for them. MAME
   itself can audit its own sets directly (`mame -verifyroms`, checked
   against whatever core version you're actually running), which romctl
   doesn't reimplement or wrap.

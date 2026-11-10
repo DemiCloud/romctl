@@ -20,7 +20,7 @@ package systemdb
 // suffix when staging for embedding, so Load's own lookup can stay a
 // plain exact match.
 type DatSource struct {
-	Provider string // "no-intro" (cartridge/handheld) or "redump" (disc-based)
+	Provider string // "no-intro" (cartridge/handheld), "redump" (disc-based), or "fbneo" (arcade - fbneo only, see below)
 	System   string
 }
 
@@ -30,9 +30,15 @@ type DatSource struct {
 // no-intro), with the provider's actual pack name spelled out per entry
 // rather than derived, since No-Intro/Redump naming doesn't follow a fixed
 // pattern from romctl's own system names. A system with no real DAT
-// coverage (arcade - MAME has its own, structurally different, ROM-set
-// metadata, not a hash-per-dump list; a few laserdisc/hybrid niches with no
-// dedicated pack) is left out rather than guessed.
+// coverage (MAME proper, Naomi, CPS, and every other ClassArcade system
+// besides fbneo - no hash-per-dump pack lined up for them; a few
+// laserdisc/hybrid niches with no dedicated pack either) is left out
+// rather than guessed. fbneo is the one arcade exception: FinalBurn
+// Neo's own repo (https://github.com/libretro/FBNeo/tree/master/dats/)
+// ships a genuine Logiqx-XML DAT generated from its own driver source,
+// version-matched to itself the same way `mame -verifyroms` is - see
+// "DAT snapshot status" in AGENTS.md for its (simpler, un-timestamped)
+// staging convention.
 //
 // The no-intro entries below were cross-checked against a real 2026-11-08
 // "No-Intro Love Pack (DAT)" listing. The redump entries were cross-
@@ -148,4 +154,14 @@ var Dat = map[string]DatSource{
 	"megaduck":    {"no-intro", "Welback - Mega Duck"},
 	"supervision": {"no-intro", "Watara - Supervision"},
 	"gamecom":     {"no-intro", "Tiger - Game.com"},
+
+	// FBNeo (arcade) - see DatSource's and this map's own doc comments
+	// above for why fbneo is the one ClassArcade system with real DAT
+	// coverage. "FinalBurn Neo - Arcade Games" matches the real file's
+	// own <header><name> exactly (confirmed against a real download);
+	// FBNeo's repo also ships per-platform DATs for the *other* systems
+	// it emulates (NES, SNES, Mega Drive, ...) - those are irrelevant
+	// here, since those systems already have their own proper No-Intro
+	// DAT under their own romctl system directory.
+	"fbneo": {"fbneo", "FinalBurn Neo - Arcade Games"},
 }

@@ -36,9 +36,16 @@ type ROM struct {
 // region, revision or translation is its own Game, not a variant of one -
 // see Collection's doc comment on why clone/parent grouping is out of
 // scope for now).
+//
+// Description is optional: FBNeo-shaped arcade DATs put a terse internal
+// set code in Name ("88games") and the actual human title in a sibling
+// <description> ("'88 Games") - No-Intro/Redump never populate it, since
+// their own Name is already the human title. See Match, which prefers
+// Description over Name for MatchResult.Game when it's present.
 type Game struct {
-	Name string
-	ROMs []ROM
+	Name        string
+	Description string
+	ROMs        []ROM
 }
 
 // Header is a Datafile's own metadata - Version/Date come straight from
@@ -66,8 +73,9 @@ type xmlROM struct {
 }
 
 type xmlGame struct {
-	Name string   `xml:"name,attr"`
-	ROMs []xmlROM `xml:"rom"`
+	Name        string   `xml:"name,attr"`
+	Description string   `xml:"description"`
+	ROMs        []xmlROM `xml:"rom"`
 }
 
 type xmlHeader struct {
@@ -94,7 +102,7 @@ func Parse(data []byte) (*Datafile, error) {
 		Date:    raw.Header.Date,
 	}}
 	for _, g := range raw.Games {
-		game := Game{Name: g.Name}
+		game := Game{Name: g.Name, Description: g.Description}
 		for _, r := range g.ROMs {
 			game.ROMs = append(game.ROMs, ROM{
 				Name: r.Name,
@@ -218,7 +226,11 @@ func (df *Datafile) Match(byCRC, byMD5, bySHA1 map[string]string) []MatchResult 
 	out := make([]MatchResult, 0, len(df.Games))
 	for _, g := range df.Games {
 		matched, ok := g.have(byCRC, byMD5, bySHA1)
-		out = append(out, MatchResult{Game: g.Name, Have: ok, Matched: matched})
+		name := g.Name
+		if g.Description != "" {
+			name = g.Description
+		}
+		out = append(out, MatchResult{Game: name, Have: ok, Matched: matched})
 	}
 	return out
 }

@@ -90,6 +90,60 @@ func TestMatchRequiresEveryROM(t *testing.T) {
 	}
 }
 
+// arcadeStyleDat mirrors FBNeo's own DAT shape: a terse set-name
+// attribute plus a sibling <description> child carrying the actual
+// human title - unlike No-Intro/Redump, which only ever use name.
+const arcadeStyleDat = `<datafile><header><name>FinalBurn Neo - Arcade Games</name></header>
+<game name="88games"><description>'88 Games</description><rom name="861m01.k18" size="1" crc="aaaaaaaa"/></game>
+</datafile>`
+
+func TestParseCapturesDescription(t *testing.T) {
+	df, err := Parse([]byte(arcadeStyleDat))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if df.Games[0].Name != "88games" {
+		t.Errorf("Games[0].Name = %q, want %q", df.Games[0].Name, "88games")
+	}
+	if df.Games[0].Description != "'88 Games" {
+		t.Errorf("Games[0].Description = %q, want %q", df.Games[0].Description, "'88 Games")
+	}
+}
+
+func TestParseDescriptionlessDatUnaffected(t *testing.T) {
+	// No-Intro/Redump-shaped DATs never carry <description> - Description
+	// must stay empty, not some zero-value surprise.
+	df, err := Parse([]byte(sampleDat))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if df.Games[0].Description != "" {
+		t.Errorf("Games[0].Description = %q, want empty for a No-Intro-shaped DAT", df.Games[0].Description)
+	}
+}
+
+func TestMatchPrefersDescriptionOverName(t *testing.T) {
+	df, err := Parse([]byte(arcadeStyleDat))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	results := df.Match(nil, nil, nil)
+	if results[0].Game != "'88 Games" {
+		t.Errorf("results[0].Game = %q, want the Description, not the bare set name %q", results[0].Game, df.Games[0].Name)
+	}
+}
+
+func TestMatchFallsBackToNameWithoutDescription(t *testing.T) {
+	df, err := Parse([]byte(sampleDat))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	results := df.Match(nil, nil, nil)
+	if results[0].Game != "Some Game (World)" {
+		t.Errorf("results[0].Game = %q, want the bare Name when there's no Description", results[0].Game)
+	}
+}
+
 func TestLoadUnknownSystem(t *testing.T) {
 	df, ok, err := Load("not-a-real-system", "")
 	if ok || err != nil || df != nil {

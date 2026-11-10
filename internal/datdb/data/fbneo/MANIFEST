@@ -1,0 +1,8 @@
+placeholder: no FBNeo DAT snapshot staged yet.
+Download "FinalBurn Neo (ClrMame Pro XML, Arcade only).dat" from
+https://github.com/libretro/FBNeo/tree/master/dats/, rename it to
+"FinalBurn Neo - Arcade Games.dat" (matching this DAT's own
+<header><name> - no per-day timestamp suffix to strip here, unlike
+No-Intro/Redump, so the rename is the only staging step needed), drop it
+under thirdparty/dats/fbneo/, then run `make dats`, or pass --dat-dir to
+romctl collection to use your own DAT file without embedding anything.
