@@ -17,6 +17,7 @@ import (
 	"github.com/demicloud/romctl/internal/archive"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/formats/iso9660"
+	"github.com/demicloud/romctl/internal/gamelist"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
@@ -153,9 +154,16 @@ func findMarkerDir(root string, spec Spec) (string, error) {
 
 // BuildISOs builds a plain ISO9660 image from every FolderSuffix disc
 // folder in sysDir that matches spec, retiring the folder on success.
-// Returns the number of ISOs successfully built, so callers can report a
-// summary.
-func BuildISOs(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger) (int, error) {
+// Unlike UnpackArchives' own archive-to-folder step (an archive is never
+// itself a scraped entry, so there's nothing to carry over), the disc
+// folder here is a real ES-DE game entry in its own right - exactly the
+// shape a Title.m3u/ directory is for a multi-disc game - so it can
+// already have scraped metadata/media if the library was scraped (on-
+// device by ES-DE itself, or pulled down locally) before this command
+// ever ran; gamelist.Rename follows a successful build for the same
+// reason every other conversion command calls it. Returns the number of
+// ISOs successfully built, so callers can report a summary.
+func BuildISOs(libRoot, sysDir, sys string, spec Spec, runner *actions.Runner, log *cliutil.Logger) (int, error) {
 	entries, err := os.ReadDir(sysDir)
 	if err != nil {
 		return 0, nil
@@ -183,6 +191,9 @@ func BuildISOs(sysDir, sys string, spec Spec, runner *actions.Runner, log *cliut
 			log.Errf("failed, folder kept: %s: %v", discDir, err)
 			failed = true
 			continue
+		}
+		if err := gamelist.Rename(libRoot, sys, e.Name(), title+".iso"); err != nil {
+			log.Errf("gamelist update failed: %s/%s: %v", sys, e.Name(), err)
 		}
 		built++
 	}

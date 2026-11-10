@@ -56,8 +56,13 @@ Key `internal/` packages:
   converts a ROM calls `gamelist.Rename` right after the on-disk change
   succeeds, so `ES-DE/gamelists/<sys>/gamelist.xml` and
   `ES-DE/downloaded_media/<sys>/` (if pulled locally) stay pointed at the
-  right file. `internal/discimage` (PS3) is the one exception: an archive
-  is never itself a scraped entry in practice, so there's nothing to hook.
+  right file. `internal/discimage`'s `UnpackArchives` (archive ->
+  `Title.ps3/` folder) is the one step that doesn't: an archive is never
+  itself a scraped entry in practice, so there's nothing to hook. Its own
+  `BuildISOs` (`Title.ps3/` folder -> `Title.iso`) is not an exception -
+  the folder is a real ES-DE game entry in its own right (the same "one
+  directory is one game" shape as `Title.m3u/`), so it calls
+  `gamelist.Rename` same as any other conversion.
 - **Atomic outputs.** Write to a temporary name (`*.partial.*`, `*.tmp.*`),
   validate, then rename. `check` reports leftovers of those patterns as FAIL.
 - **Case-only renames** must go through `actions.RenamePath` (handles

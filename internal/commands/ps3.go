@@ -35,7 +35,7 @@ func PS3(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 		if err != nil {
 			failed.Add(1)
 		}
-		n, err = discimage.BuildISOs(sysDir, sys, spec, runner, log)
+		n, err = discimage.BuildISOs(lib.Root, sysDir, sys, spec, runner, log)
 		built.Add(int64(n))
 		if err != nil {
 			failed.Add(1)
