@@ -114,3 +114,47 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Errorf("expected a zero-value Config, got %+v", cfg)
 	}
 }
+
+func TestDefaultPathUsesExplicitOverride(t *testing.T) {
+	t.Setenv("ROMCTL_CONFIG", "/explicit/path/config.toml")
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/explicit/path/config.toml" {
+		t.Errorf("DefaultPath() = %q, want %q", got, "/explicit/path/config.toml")
+	}
+}
+
+func TestDefaultPathUsesXDGConfigHome(t *testing.T) {
+	t.Setenv("ROMCTL_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg/config")
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("/xdg/config", "romctl", "config.toml")
+	if got != want {
+		t.Errorf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+// TestDefaultPathFallsBackToHomeConfig guards against raw string
+// concatenation (home + "/.config") producing a mixed-separator path on
+// a platform where os.UserHomeDir() doesn't return a "/"-separated
+// value (Windows, where it reads %USERPROFILE%) - filepath.Join builds
+// the path components cleanly instead.
+func TestDefaultPathFallsBackToHomeConfig(t *testing.T) {
+	t.Setenv("ROMCTL_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".config", "romctl", "config.toml")
+	if got != want {
+		t.Errorf("DefaultPath() = %q, want %q", got, want)
+	}
+}

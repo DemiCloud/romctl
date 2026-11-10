@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -67,9 +68,9 @@ func DefaultPath() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		base = home + "/.config"
+		base = filepath.Join(home, ".config")
 	}
-	return base + "/romctl/config.toml", nil
+	return filepath.Join(base, "romctl", "config.toml"), nil
 }
 
 // Load reads and parses the TOML config file at path. A missing file is
