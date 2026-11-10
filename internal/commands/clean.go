@@ -29,11 +29,14 @@ func Clean(lib *library.Library, runner *actions.Runner, systems []string, assum
 	var targets []*target
 	for _, sys := range systems {
 		sysDir := filepath.Join(lib.Roms, sys)
-		if dir := filepath.Join(sysDir, "_to_delete"); exists(dir) {
+		if dir := filepath.Join(sysDir, "_to_delete"); isDir(dir) {
 			targets = append(targets, &target{sys: sys, dir: dir, label: filepath.Join(sys, "_to_delete")})
 		}
 		nested, _ := filepath.Glob(filepath.Join(sysDir, "*.m3u", "_to_delete"))
 		for _, dir := range nested {
+			if !isDir(dir) {
+				continue
+			}
 			if rel, err := filepath.Rel(lib.Roms, dir); err == nil {
 				targets = append(targets, &target{sys: sys, dir: dir, label: rel})
 			}

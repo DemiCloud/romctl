@@ -68,6 +68,80 @@ func TestRenameAppliesSchemeToM3UDir(t *testing.T) {
 // point: a hash-confirmed file renames straight to the DAT's own
 // canonical name (run through scheme), not a cleaned-up guess based on
 // whatever name it already had.
+// TestRenameM3UDirSelfHealsAfterPartialFailure guards against a real
+// regression: renameM3UDir used to rewrite the playlist by string-
+// substituting its old content in memory, so a disc rename that
+// succeeded followed by one that failed left the playlist referencing
+// the first disc under a name that no longer existed on disk - and a
+// retry couldn't fix it either, since the already-renamed disc's name
+// is already scheme-clean (a no-op the second time through), so nothing
+// ever touched that stale playlist line again. rewriteM3UPlaylist fixes
+// this by rebuilding the playlist from whatever's actually in the
+// directory each time, rather than patching old text.
+func TestRenameM3UDirSelfHealsAfterPartialFailure(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "psx")
+	dir := filepath.Join(sysDir, "Title (USA).m3u")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Title (USA) (Disc 01).chd", "disc-one")
+	write("Title (USA) (Disc 02).chd", "disc-two")
+	write("Title (USA).m3u", "Title (USA) (Disc 01).chd\nTitle (USA) (Disc 02).chd\n")
+
+	// Block disc 2's rename target with a directory: os.Rename onto an
+	// existing directory fails, simulating any mid-loop rename error
+	// (permission, EXDEV, disk full, ...) without needing a real one.
+	blocker := filepath.Join(dir, "Title (Disc 02).chd")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := library.Open(root)
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	if err := Rename(lib, runner, []string{"psx"}, actions.SchemeNoTag, false, false, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// First pass: disc 1 renamed, disc 2 blocked - nothing else should
+	// have moved (playlist/directory rename only happens once every disc
+	// succeeds).
+	if !exists(dir) {
+		t.Fatal("directory should not have been renamed after a disc failure")
+	}
+	if !exists(filepath.Join(dir, "Title (Disc 01).chd")) {
+		t.Error("disc 1 should have been renamed despite disc 2's failure")
+	}
+
+	// Clear the blocker (the underlying problem is "fixed") and retry.
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename(lib, runner, []string{"psx"}, actions.SchemeNoTag, false, false, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	newDir := filepath.Join(sysDir, "Title.m3u")
+	playlist, err := os.ReadFile(filepath.Join(newDir, "Title.m3u"))
+	if err != nil {
+		t.Fatalf("reading renamed playlist: %v", err)
+	}
+	want := "Title (Disc 01).chd\nTitle (Disc 02).chd\n"
+	if string(playlist) != want {
+		t.Errorf("playlist content = %q, want %q (a stale disc 1 reference would mean the self-heal regressed)", playlist, want)
+	}
+	for _, name := range []string{"Title (Disc 01).chd", "Title (Disc 02).chd"} {
+		if !exists(filepath.Join(newDir, name)) {
+			t.Errorf("expected %s inside the renamed directory", name)
+		}
+	}
+}
+
 // TestRenameAppliesSchemeToPS3Dir guards rename's handling of a
 // Title.ps3/ disc-folder directory as its own naming unit, the same way
 // Title.m3u/ is - previously naming was set once, at unpack time

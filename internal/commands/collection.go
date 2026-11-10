@@ -146,7 +146,19 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			df = stripSidecarROMs(df)
 		}
 		df = filterRegion(df, regions)
-		files := listGameFiles(filepath.Join(lib.Roms, sys), hashable)
+		sysDir := filepath.Join(lib.Roms, sys)
+		if _, err := os.ReadDir(sysDir); err != nil {
+			// listGameFiles itself treats an unreadable directory as "no
+			// files" (nil, no error) - fine for dupes' own use, where that
+			// and "system skipped" look identical either way (nothing to
+			// compare means no duplicates regardless), but collection's
+			// job still runs that system's DAT through Match() with empty
+			// hash pools, reporting every entry "missing" - indistinguishable
+			// from genuinely owning none of them. Skip the system instead,
+			// same as before listGameFiles existed.
+			continue
+		}
+		files := listGameFiles(sysDir, hashable)
 		jobs = append(jobs, sysJob{sys, files, df})
 		total += len(files)
 	}

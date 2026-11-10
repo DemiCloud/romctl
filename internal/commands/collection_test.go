@@ -93,6 +93,44 @@ func TestCollectionMatchesFileInsideM3U(t *testing.T) {
 	}
 }
 
+// TestCollectionSkipsSystemWithUnreadableDirectory guards against a real
+// regression: Collection used to skip a system outright when its
+// roms/<sys> directory couldn't be read (os.ReadDir failing), but after
+// routing through the shared listGameFiles (which itself treats a read
+// failure as "no files" rather than propagating the error, fine for
+// dupes - nothing to compare either way - but not for Collection), the
+// system kept running through Match() with empty hash pools instead,
+// reporting every DAT entry "missing" - indistinguishable from
+// genuinely owning none of the games. A plain file where roms/gb/ should
+// be a directory is enough to make os.ReadDir fail without needing a
+// real permissions scenario.
+func TestCollectionSkipsSystemWithUnreadableDirectory(t *testing.T) {
+	root := t.TempDir()
+	romsDir := filepath.Join(root, "roms")
+	if err := os.MkdirAll(romsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(romsDir, "gb"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	datDir := t.TempDir()
+	writeDat(t, datDir, []byte("have-this-rom"))
+
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		ok, err := Collection(lib, []string{"gb"}, datDir, false, false, true, nil, cliutil.FormatPlain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Collection reported failure")
+		}
+	})
+	if strings.Contains(out, "Missing Game") || strings.Contains(out, "missing") {
+		t.Errorf("expected the system to be skipped (no rows) rather than reported as all-missing, got:\n%s", out)
+	}
+}
+
 func TestCollection(t *testing.T) {
 	root := t.TempDir()
 	sysDir := filepath.Join(root, "roms", "gb")

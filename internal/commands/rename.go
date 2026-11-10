@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,13 +138,13 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 		for _, e := range entries {
 			base := e.Name()
 			if e.IsDir() {
-				switch {
-				case strings.HasSuffix(base, ".m3u"):
-					r, f := renameM3UDir(lib, runner, log, sys, sysDir, base, scheme)
-					renamedCount.Add(r)
-					failedCount.Add(f)
-				case strings.HasSuffix(base, ".ps3"):
-					r, f := renameSuffixedDir(lib, runner, log, sys, sysDir, base, ".ps3", scheme)
+				if suffix, ok := renamableDirSuffix(base); ok {
+					var r, f int64
+					if suffix == ".m3u" {
+						r, f = renameM3UDir(lib, runner, log, sys, sysDir, base, scheme)
+					} else {
+						r, f = renameSuffixedDir(lib, runner, log, sys, sysDir, base, suffix, scheme)
+					}
 					renamedCount.Add(r)
 					failedCount.Add(f)
 				}
@@ -181,6 +183,50 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 	return renamedCount.Load(), failedCount.Load()
 }
 
+// renamableDirSuffix returns the suffix of base if it's a directory
+// whose own name (minus that suffix) is its game's title - the single
+// source of truth for the "one directory is one game" shapes rename and
+// checkNaming both have to treat as a naming unit (Title.m3u/ multi-disc
+// playlists, Title.ps3/ disc folders), so the two can't silently drift
+// apart on what counts.
+func renamableDirSuffix(base string) (suffix string, ok bool) {
+	switch {
+	case strings.HasSuffix(base, ".m3u"):
+		return ".m3u", true
+	case strings.HasSuffix(base, ".ps3"):
+		return ".ps3", true
+	default:
+		return "", false
+	}
+}
+
+// beginDirRename computes scheme's effect on sysDir/base's title (minus
+// suffix), checks for a same-but-different-case collision at the
+// resulting path, and gates on runner.Act - the shared first half of
+// renameSuffixedDir and renameM3UDir. ok is false whenever the caller
+// should return (0, 0) immediately without touching the filesystem:
+// no rename is actually needed, a collision was found, or this is a
+// --dry-run preview.
+func beginDirRename(runner *actions.Runner, log *cliutil.Logger, sys, sysDir, base, suffix string, scheme actions.Scheme) (dir, newDir, newBase string, ok bool) {
+	title := strings.TrimSuffix(base, suffix)
+	clean := actions.ApplyScheme(title, scheme)
+	if clean == title {
+		return "", "", "", false
+	}
+	dir = filepath.Join(sysDir, base)
+	newBase = clean + suffix
+	newDir = filepath.Join(sysDir, newBase)
+
+	if same, _ := sameExists(newDir, dir); exists(newDir) && !same {
+		log.Errf("collision, skipped: %s/%s -> %s", sys, base, newBase)
+		return "", "", "", false
+	}
+	if !runner.Act("rename %s/%s -> %s/", sys, base, newBase) {
+		return "", "", "", false
+	}
+	return dir, newDir, newBase, true
+}
+
 // renameSuffixedDir applies scheme to a sysDir/base directory whose own
 // name (minus suffix, e.g. ".ps3") is the game's title - the same "one
 // directory is the naming unit" case renameM3UDir handles for a
@@ -192,23 +238,11 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 // (discimage.UnpackArchives), and never revisited - the same "naming is
 // creation-time-only" gap renameM3UDir fixed for Title.m3u/.
 func renameSuffixedDir(lib *library.Library, runner *actions.Runner, log *cliutil.Logger, sys, sysDir, base, suffix string, scheme actions.Scheme) (renamed, failed int64) {
-	title := strings.TrimSuffix(base, suffix)
-	clean := actions.ApplyScheme(title, scheme)
-	if clean == title {
+	dir, newDir, newBase, ok := beginDirRename(runner, log, sys, sysDir, base, suffix, scheme)
+	if !ok {
 		return 0, 0
 	}
-	src := filepath.Join(sysDir, base)
-	newBase := clean + suffix
-	dst := filepath.Join(sysDir, newBase)
-
-	if same, _ := sameExists(dst, src); exists(dst) && !same {
-		log.Errf("collision, skipped: %s/%s -> %s", sys, base, newBase)
-		return 0, 0
-	}
-	if !runner.Act("rename %s/%s -> %s/", sys, base, newBase) {
-		return 0, 0
-	}
-	if err := actions.RenamePath(src, dst); err != nil {
+	if err := actions.RenamePath(dir, newDir); err != nil {
 		log.Errf("rename failed: %s/%s: %v", sys, base, err)
 		return 0, 1
 	}
@@ -223,50 +257,35 @@ func renameSuffixedDir(lib *library.Library, runner *actions.Runner, log *cliuti
 // wherever it appears in a name (see actions.CleanName/extractSchemeTags),
 // so it's applied independently to the bare directory title and to each
 // disc's own full filename, same as any other rename in this package -
-// no special-case disc-tag handling needed here. Moving the pieces
-// together: every disc file is renamed first (while the directory still
-// has its old, stable path), the playlist's own text content is rewritten
-// to reference the renamed discs, the playlist file itself is renamed to
-// match the new title, and only then is the directory itself renamed -
-// gamelist.Rename follows, same as every other rename in this package,
-// since a multi-disc game is scraped by its playlist/directory name, not
-// any one disc (see gamelist's own doc comment and scrape.go). A failure
-// partway through (a disc rename error) leaves some discs renamed and the
-// directory/playlist not yet moved; re-running rename is safe and
-// self-heals, since an already-renamed disc's name is already a no-op
-// for ApplyScheme the second time through.
+// no special-case disc-tag handling needed here. Every disc is renamed
+// first (while the directory still has its old, stable path), then
+// rewriteM3UPlaylist regenerates the playlist from whatever discs are
+// actually on disk afterward - never by patching the old playlist text
+// in place - so a disc rename failure partway through can't leave the
+// playlist referencing a disc under a name that no longer exists: a
+// disc this call already renamed is reflected correctly even if a later
+// disc in the same loop fails, and a disc that still needs renaming
+// next time keeps its current (still playlist-matching) name until it
+// does. The playlist file itself is renamed to match the new title, and
+// only then is the directory itself renamed - gamelist.Rename follows,
+// same as every other rename in this package, since a multi-disc game
+// is scraped by its playlist/directory name, not any one disc (see
+// gamelist's own doc comment and scrape.go).
 func renameM3UDir(lib *library.Library, runner *actions.Runner, log *cliutil.Logger, sys, sysDir, base string, scheme actions.Scheme) (renamed, failed int64) {
+	dir, newDir, newBase, ok := beginDirRename(runner, log, sys, sysDir, base, ".m3u", scheme)
+	if !ok {
+		return 0, 0
+	}
+
 	title := strings.TrimSuffix(base, ".m3u")
-	clean := actions.ApplyScheme(title, scheme)
-	if clean == title {
-		return 0, 0
-	}
-	dir := filepath.Join(sysDir, base)
-	newBase := clean + ".m3u"
-	newDir := filepath.Join(sysDir, newBase)
-
-	if same, _ := sameExists(newDir, dir); exists(newDir) && !same {
-		log.Errf("collision, skipped: %s/%s -> %s", sys, base, newBase)
-		return 0, 0
-	}
-	if !runner.Act("rename %s/%s -> %s/", sys, base, newBase) {
-		return 0, 0
-	}
-
+	playlistName := title + ".m3u"
 	discs, err := os.ReadDir(dir)
 	if err != nil {
 		log.Errf("read failed: %s: %v", dir, err)
 		return 0, 1
 	}
-	playlistName := title + ".m3u"
-	playlist := filepath.Join(dir, playlistName)
-	data, err := os.ReadFile(playlist)
-	if err != nil {
-		log.Errf("read playlist failed: %s: %v", playlist, err)
-		return 0, 1
-	}
-	content := string(data)
 
+	renameFailed := false
 	for _, d := range discs {
 		name := d.Name()
 		ext := strings.ToLower(filepath.Ext(name))
@@ -280,17 +299,19 @@ func renameM3UDir(lib *library.Library, runner *actions.Runner, log *cliutil.Log
 		}
 		if err := actions.RenamePath(filepath.Join(dir, name), filepath.Join(dir, newName)); err != nil {
 			log.Errf("rename failed: %s/%s/%s: %v", sys, base, name, err)
-			return 0, 1
+			renameFailed = true
 		}
-		content = strings.ReplaceAll(content, name, newName)
+	}
+	if renameFailed {
+		return 0, 1
 	}
 
-	if err := os.WriteFile(playlist, []byte(content), 0o644); err != nil {
-		log.Errf("rewrite playlist failed: %s: %v", playlist, err)
+	if err := rewriteM3UPlaylist(dir, playlistName); err != nil {
+		log.Errf("rewrite playlist failed: %s: %v", filepath.Join(dir, playlistName), err)
 		return 0, 1
 	}
 	newPlaylist := filepath.Join(dir, newBase)
-	if err := actions.RenamePath(playlist, newPlaylist); err != nil {
+	if err := actions.RenamePath(filepath.Join(dir, playlistName), newPlaylist); err != nil {
 		log.Errf("rename failed: %s/%s: %v", sys, playlistName, err)
 		return 0, 1
 	}
@@ -302,6 +323,42 @@ func renameM3UDir(lib *library.Library, runner *actions.Runner, log *cliutil.Log
 		log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
 	}
 	return 1, 0
+}
+
+// rewriteM3UPlaylist regenerates dir's playlistName file from the disc
+// files actually present in dir, sorted by their own "(Disc N)" tag -
+// rebuilding from current on-disk reality rather than patching whatever
+// the playlist said before, so this is safe to call (and self-heals a
+// prior partial failure) regardless of which discs were just renamed,
+// already matched the target scheme, or still need another pass.
+func rewriteM3UPlaylist(dir, playlistName string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	type disc struct {
+		name string
+		num  int
+	}
+	var discs []disc
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || name == playlistName {
+			continue
+		}
+		m := discFileRE.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		num, _ := strconv.Atoi(m[2])
+		discs = append(discs, disc{name, num})
+	}
+	sort.Slice(discs, func(i, j int) bool { return discs[i].num < discs[j].num })
+	var lines []string
+	for _, d := range discs {
+		lines = append(lines, d.name)
+	}
+	return os.WriteFile(filepath.Join(dir, playlistName), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 // renameVerified is Rename's --verify-dat path: a per-system hash-and-

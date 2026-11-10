@@ -109,15 +109,10 @@ func checkNaming(report *audit.Report, lib *library.Library, sys string, scheme 
 		if e.IsDir() {
 			// A Title.m3u/ playlist directory or a Title.ps3/ disc folder
 			// is its game's own naming unit, same as a bare file is for
-			// everything else - rename handles both (see renameM3UDir/
-			// renameSuffixedDir).
-			var suffix string
-			switch {
-			case strings.HasSuffix(base, ".m3u"):
-				suffix = ".m3u"
-			case strings.HasSuffix(base, ".ps3"):
-				suffix = ".ps3"
-			default:
+			// everything else - rename handles both (see renamableDirSuffix,
+			// renameM3UDir/renameSuffixedDir).
+			suffix, ok := renamableDirSuffix(base)
+			if !ok {
 				continue
 			}
 			report.Scan(audit.CategoryNaming, 1)
@@ -284,13 +279,21 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string, esd
 		if base == "systeminfo.txt" || base == ".directory" {
 			continue
 		}
-		report.Scan(audit.CategoryContainers, 1)
 		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
+			if strings.HasSuffix(base, ".m3u") {
+				// checkM3uContainers (via checkContainerDir) scans each
+				// disc inside individually - scanning the directory entry
+				// itself here too would double-count it against that.
+				checkContainerDir(report, sys, class, path, esdeNames)
+				continue
+			}
+			report.Scan(audit.CategoryContainers, 1)
 			checkContainerDir(report, sys, class, path, esdeNames)
-		} else {
-			checkContainerFile(report, sys, class, path, base, esdeNames)
+			continue
 		}
+		report.Scan(audit.CategoryContainers, 1)
+		checkContainerFile(report, sys, class, path, base, esdeNames)
 	}
 }
 
@@ -460,4 +463,9 @@ func checkXbox(report *audit.Report, sys, base, filePath string, isISO bool) {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

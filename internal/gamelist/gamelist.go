@@ -146,7 +146,15 @@ func removeGamelistEntry(libRoot, sys, rel string) error {
 // removeMedia deletes every downloaded_media file matching rel, across
 // whatever media type subdirectories are present - renameMedia's own
 // matching rule (bare name or extension-stripped stem), just removing
-// instead of moving.
+// instead of moving. A permanent delete, not a Retire into _to_delete/,
+// is the deliberate choice here despite romctl's general "nothing is
+// deleted outright" rule (see AGENTS.md): that rule exists because a
+// replaced ROM original has real recovery value, but art scraped for a
+// ROM under the *wrong* platform (Remove's only caller) never correctly
+// represents anything to begin with, and clean has no notion of a
+// _to_delete/ anywhere under ES-DE/downloaded_media/ to ever collect it
+// from - retiring it here would just be permanent clutter with no path
+// back to actually being cleaned up, strictly worse than deleting it.
 func removeMedia(libRoot, sys, rel string) error {
 	mediaRoot := filepath.Join(libRoot, "ES-DE", "downloaded_media", sys)
 	types, err := os.ReadDir(mediaRoot)

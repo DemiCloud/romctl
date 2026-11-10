@@ -227,6 +227,50 @@ func TestCheckFlagsCDAsDVDMistakeInsideM3UDir(t *testing.T) {
 	}
 }
 
+// TestCheckContainersDoesNotDoubleCountM3UDirectory guards a real
+// regression: checkContainers scans every top-level entry once before
+// dispatching it, so when that dispatch (for a Title.m3u/ directory)
+// went on to additionally scan each disc inside via checkM3uContainers,
+// the directory's own scan on top of that double-counted it - inflating
+// the Containers category's reported Pass count by one per multi-disc
+// game, even though the directory itself never gets a pass/fail verdict
+// of its own (only its discs do).
+func TestCheckContainersDoesNotDoubleCountM3UDirectory(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "roms", "psx", "Game.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Two discs that pass containers checks cleanly (KindCDAsDVDMAGE only
+	// warns for a DVD-class system; psx is CD-class) - correctly counted,
+	// this system's containers category should show Pass=2, not 3.
+	writeFakeCDAsDVDImageCHD(t, filepath.Join(m3uDir, "Game (Disc 01).chd"))
+	writeFakeCDAsDVDImageCHD(t, filepath.Join(m3uDir, "Game (Disc 02).chd"))
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\nGame (Disc 02).chd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	out := captureStdout(t, func() {
+		Check(lib, []string{"psx"}, actions.SchemeKeep, false, cliutil.FormatPlain, "")
+	})
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "containers") {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		if len(fields) < 4 {
+			t.Fatalf("unexpected containers row shape: %q", line)
+		}
+		pass := strings.TrimSpace(fields[3])
+		if pass != "2" {
+			t.Errorf("containers Pass = %q, want %q (got double-counted if 3)", pass, "2")
+		}
+		return
+	}
+	t.Fatalf("no containers row found in output:\n%s", out)
+}
+
 // TestCheckM3uDirRecognizesNestedToDelete guards checkM3uDir's handling
 // of a _to_delete/ directory nested inside a Title.m3u/ directory (left
 // behind by chd's DVD re-encode pass, see TestCHDDryRunReencodesNestedM3UCHD):

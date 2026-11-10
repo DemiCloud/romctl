@@ -50,3 +50,31 @@ func TestCleanRemovesNestedM3UToDelete(t *testing.T) {
 		t.Error("nested Game.m3u/_to_delete/ should have been removed too")
 	}
 }
+
+// TestCleanIgnoresNonDirectoryToDelete guards a real regression: the
+// target-collection check was relaxed from os.Stat+IsDir to a bare
+// exists(), so a plain file sitting at roms/<sys>/_to_delete (never
+// created by Retire itself, which always makes a directory, but
+// possible from an unrelated bug or a user mistake) would silently
+// become a clean target instead of being excluded the way the original
+// IsDir check guaranteed.
+func TestCleanIgnoresNonDirectoryToDelete(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "psx")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notADir := filepath.Join(sysDir, "_to_delete")
+	if err := os.WriteFile(notADir, []byte("not actually a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	if err := Clean(lib, runner, []string{"psx"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(notADir) {
+		t.Error("a non-directory _to_delete should have been left alone, not treated as a clean target")
+	}
+}
