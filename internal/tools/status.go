@@ -4,6 +4,8 @@ import (
 	"io/fs"
 	"os/exec"
 	"regexp"
+
+	"github.com/demicloud/romctl/internal/executil"
 )
 
 // knownTools is every binary Resolve knows how to find, in the order
@@ -72,7 +74,7 @@ func Version(tool string) string {
 	if err != nil {
 		return ""
 	}
-	out, _ := exec.Command(path, args...).CombinedOutput()
+	out, _ := executil.Run(path, args...)
 	m := versionPattern.FindString(string(out))
 	if m == "" {
 		return ""
