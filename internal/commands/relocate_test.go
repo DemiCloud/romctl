@@ -52,6 +52,46 @@ func TestRelocateMovesMisfiledCartridgeROM(t *testing.T) {
 	}
 }
 
+// TestRelocateRemovesStaleGamelistEntry guards relocate's gamelist
+// cleanup: a misfiled ROM that picked up a (wrong-platform) scraped
+// gamelist entry under the system it was mistakenly dropped into - a
+// real-world case, not a theoretical one (a Genesis cart left unnoticed
+// in dreamcast/) - must have that entry removed once relocate moves it
+// to its correct system, rather than left behind pointing at a path that
+// no longer exists there. Nothing should be added to the destination
+// system's gamelist either: there's no legitimate scrape to carry over.
+func TestRelocateRemovesStaleGamelistEntry(t *testing.T) {
+	lib := relocateLibrary(t)
+	src := filepath.Join(lib.Roms, "segacd", "ALTERED_.bin")
+	if err := os.WriteFile(src, genesisROMBytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gl := filepath.Join(lib.Root, "ES-DE", "gamelists", "segacd", "gamelist.xml")
+	if err := os.MkdirAll(filepath.Dir(gl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gl, []byte(`<gameList><game><path>./ALTERED_.bin</path><name>Altered Beast</name></game></gameList>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := Relocate(lib, &actions.Runner{}, []string{"segacd"})
+	if err != nil || !ok {
+		t.Fatalf("Relocate() = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	got, err := os.ReadFile(gl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "ALTERED_.bin") {
+		t.Errorf("expected the stale segacd gamelist entry to be removed, got:\n%s", got)
+	}
+	genesisGL := filepath.Join(lib.Root, "ES-DE", "gamelists", "genesis", "gamelist.xml")
+	if exists(genesisGL) {
+		t.Error("nothing should have been added to the destination system's gamelist")
+	}
+}
+
 func TestRelocateLeavesSegaCDBootSectorAlone(t *testing.T) {
 	lib := relocateLibrary(t)
 	src := filepath.Join(lib.Roms, "segacd", "Game (Track 1).bin")

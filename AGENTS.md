@@ -62,7 +62,15 @@ Key `internal/` packages:
   `BuildISOs` (`Title.ps3/` folder -> `Title.iso`) is not an exception -
   the folder is a real ES-DE game entry in its own right (the same "one
   directory is one game" shape as `Title.m3u/`), so it calls
-  `gamelist.Rename` same as any other conversion.
+  `gamelist.Rename` same as any other conversion. `relocate` (moving a
+  misfiled cartridge ROM into a *different* system's directory) calls
+  `gamelist.Remove` instead of `Rename`: there's nothing legitimate to
+  carry over into the destination system's own gamelist (any scrape made
+  under the wrong platform was for the wrong game context to begin with),
+  but a stale entry left behind in the source system's gamelist - pointing
+  at a path that no longer exists there - is a real case (a cartridge
+  dropped into the wrong system's directory and left unnoticed until its
+  gamelist has a dead entry for it), not a theoretical one.
 - **Atomic outputs.** Write to a temporary name (`*.partial.*`, `*.tmp.*`),
   validate, then rename. `check` reports leftovers of those patterns as FAIL.
 - **Case-only renames** must go through `actions.RenamePath` (handles

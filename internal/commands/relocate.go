@@ -12,6 +12,7 @@ import (
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/formats/signature"
+	"github.com/demicloud/romctl/internal/gamelist"
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
@@ -29,6 +30,16 @@ import (
 // own conversion errors. Like Saves, nothing here is ever overwritten: a
 // destination that already exists is left in both places and reported as
 // a conflict instead of guessed at.
+//
+// Unlike every other command that moves/renames a ROM, this one calls
+// gamelist.Remove rather than gamelist.Rename: the move is to a
+// different system entirely, so there's nothing legitimate to carry
+// over into the destination system's own gamelist (any scrape made
+// under the wrong platform was for the wrong game context to begin
+// with) - but a stale entry left behind in the *source* system's
+// gamelist, pointing at a path that no longer exists there, is a real
+// case, not a theoretical one (a Genesis cart dropped into dreamcast/
+// and left unnoticed until its gamelist has a dead entry for it).
 func Relocate(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
 	log := cliutil.NewLogger("relocate", runner.Format)
@@ -77,6 +88,9 @@ func Relocate(lib *library.Library, runner *actions.Runner, systems []string) (b
 				log.Errf("move failed: %s: %v", path, err)
 				failed.Add(1)
 				continue
+			}
+			if err := gamelist.Remove(lib.Root, sys, base); err != nil {
+				log.Errf("gamelist cleanup failed: %s/%s: %v", sys, base, err)
 			}
 			moved.Add(1)
 		}

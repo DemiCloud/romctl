@@ -522,6 +522,15 @@ Like stray saves, nothing is ever overwritten: a destination that already
 exists is left in both places and reported as a conflict instead, with
 the same size/modification-time/content comparison shown above.
 
+If the misfiled ROM had already picked up a scraped entry under the
+wrong system - easy to miss until "why don't I have any Dreamcast games"
+turns out to mean "there's a Genesis cart sitting in `roms/dreamcast/`" -
+`relocate` removes that stale entry (and its media) from the wrong
+system's gamelist, rather than leaving it pointing at a path that no
+longer exists there. Nothing is added to the destination system's
+gamelist: a scrape made under the wrong platform has nothing worth
+carrying over.
+
 ### systems.txt cross-check
 
 ES-DE itself generates a `systems.txt` at the library root (one line per
