@@ -388,7 +388,12 @@ byte-match Redump's distributed one, even with perfectly correct track
 data, so a game counts as matched once every actual track is found.
 Cartridge systems are unaffected either way - they're never
 CHD-converted, so they always get a real have/missing verdict regardless
-of this flag.
+of this flag. GD-ROM (Dreamcast) CHDs stay `unverifiable` even with
+`--verify-chd`: chdman forces `--splitbin` (one bin file per track) for
+this disc type, and reproducing Redump's own split-track layout from
+that output isn't just a flag away - real-world reports describe needing
+a separate reconstruction pass this package doesn't implement. Every
+other CD/DVD/UMD-class system is unaffected.
 
 Every DAT entry - including every region/revision/translation variant - is
 its own row; `collection` doesn't group regional variants of the same game

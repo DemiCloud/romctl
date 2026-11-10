@@ -247,6 +247,20 @@ Two deliberate, lasting limitations, not TODOs:
   never checking a whole library. Cartridge systems (No-Intro) are
   unaffected either way — they're never
   CHD-converted — so they always get a real have/missing verdict.
+- **GD-ROM (Dreamcast) CHDs stay unverifiable even when extraction is
+  attempted** — `hashDiscCHD` rejects them before ever invoking chdman,
+  so this applies to `identify` too, not just `collection --verify-chd`.
+  chdman's own `extractcd` auto-enables `--splitbin` for this disc type
+  (confirmed against a real chdman 0.289: it errors outright without a
+  `%t` track variable in the output bin filename once it does), which
+  produces one bin file per track instead of the single combined file
+  `cuesheet.Parse`'s byte-range convention assumes. Reproducing Redump's
+  own split-track layout from that per-track output isn't just a flag
+  away either — real-world reports describe needing a separate
+  binmerge-style reconstruction pass to get back to the original track
+  boundaries, which this package doesn't implement. Every other
+  CD/DVD/UMD-class system (ordinary multi-track CDs, DVDs, UMDs) is
+  unaffected.
 - **No parent/clone (1G1R) grouping.** Every DAT entry — including every
   region/revision/translation variant — is its own row in `romctl
   collection`'s output.

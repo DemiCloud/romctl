@@ -28,6 +28,21 @@ func writeFakeCHDHeader(path string, logicalSize int64) {
 	}
 }
 
+// writeFakeGDHeader writes a minimal real v5 CHD header carrying a
+// "CHGD" metadata tag - the same shape formats/chd.Classify reads to
+// return KindGD, confirmed against the chd package's own equivalent
+// test fixture (writeFakeCHD in formats/chd's tests, not exported).
+func writeFakeGDHeader(path string) {
+	buf := make([]byte, 124+16)
+	copy(buf[0:8], "MComprHD")
+	binary.BigEndian.PutUint32(buf[12:16], 5)
+	binary.BigEndian.PutUint64(buf[48:56], 124) // metaOffset
+	copy(buf[124:128], "CHGD")
+	if err := os.WriteFile(path, buf, 0o644); err != nil {
+		panic(err)
+	}
+}
+
 // fakeChdmanExtract stands in for chdman's extractcd/extractdvd: it
 // writes cueContent (extractcd only) and binContent to whatever paths
 // follow "-o"/"-ob" on its command line, regardless of the input CHD
@@ -142,6 +157,23 @@ func TestHashDiscCHDDVD(t *testing.T) {
 	}
 	if want := mustHashReader(t, isoData); hashes[0] != want {
 		t.Errorf("hashes[0] = %+v, want %+v", hashes[0], want)
+	}
+}
+
+// TestHashDiscCHDRejectsGDWithoutInvokingChdman guards hashDiscCHD's
+// GD-ROM short-circuit: a GD-ROM CHD must fail cleanly before chdman is
+// ever invoked - passing a chdmanPath that would itself error loudly if
+// actually run confirms that.
+func TestHashDiscCHDRejectsGDWithoutInvokingChdman(t *testing.T) {
+	chdPath := filepath.Join(t.TempDir(), "game.chd")
+	writeFakeGDHeader(chdPath)
+
+	_, err := hashDiscCHD("/nonexistent/chdman", chdPath, systemdb.ClassCD)
+	if err == nil {
+		t.Fatal("expected an error for a GD-ROM CHD")
+	}
+	if strings.Contains(err.Error(), "no such file or directory") {
+		t.Errorf("expected a clean GD-ROM rejection, not a failed chdman invocation: %v", err)
 	}
 }
 

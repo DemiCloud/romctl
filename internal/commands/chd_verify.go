@@ -130,6 +130,20 @@ type discTrackHash struct{ crc, md5sum, sha1sum string }
 // generates (see internal/formats/cuesheet). Only called from the
 // --verify-chd path - see Collection/Identify's doc comments.
 //
+// GD-ROM (Dreamcast) CHDs are rejected up front, before ever invoking
+// chdman: extractcd auto-enables --splitbin for this disc type (one bin
+// file per track, no combined file for cuesheet.Parse's byte-range
+// convention to work against) and errors outright without a %t
+// variable in the output bin filename - confirmed against a real
+// chdman 0.289. Reproducing Redump's own split-track layout from that
+// output isn't just a flag away either: real-world reports describe
+// needing a separate binmerge-style reconstruction pass to get back to
+// the original per-track boundaries, which this package doesn't
+// implement. Every GD-ROM CHD reports unverifiable instead - same
+// default status as not passing --verify-chd at all, just without
+// wasting a doomed chdman invocation (and a wall of its own fatal-error
+// output) on every single one.
+//
 // Extraction is staged in scratch space - chdScratchDir's tmpfs when
 // there's room, a plain OS temp directory otherwise. Unlike makeCHD's
 // own scratch use, nothing here needs to land on any particular
@@ -137,6 +151,10 @@ type discTrackHash struct{ crc, md5sum, sha1sum string }
 // discarded, never written back into the library. Always cleaned up,
 // win or lose.
 func hashDiscCHD(chdmanPath, path string, class systemdb.Class) ([]discTrackHash, error) {
+	if kind, err := chd.Classify(path); err == nil && kind == chd.KindGD {
+		return nil, fmt.Errorf("%s: GD-ROM CHDs aren't supported by --verify-chd (chdman forces --splitbin for this disc type, one file per track with no combined bin to byte-range into - see hashDiscCHD's doc comment)", path)
+	}
+
 	size, err := chd.LogicalSize(path)
 	if err != nil {
 		return nil, err
