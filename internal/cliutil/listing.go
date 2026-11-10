@@ -26,6 +26,11 @@ func RenderTable(w io.Writer, format Format, headers []string, rows []table.Row)
 	for _, r := range rows {
 		t.AppendRow(r)
 	}
+	if width := terminalWidth(w); width > 0 {
+		if cfgs := squeezeColumnConfigs(format, headers, rows, width); cfgs != nil {
+			t.SetColumnConfigs(cfgs)
+		}
+	}
 	t.Render()
 }
 
