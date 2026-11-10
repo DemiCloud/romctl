@@ -19,10 +19,19 @@ const defaultSyncUser = "deck"
 
 // excludeCommon lists paths never transferred, and (because rsync does not
 // delete excluded files on the receiver) never deleted there either:
-// save/state files, conversion leftovers, pending deletions.
+// save/state files, conversion leftovers, pending deletions. Two distinct
+// leftover shapes exist (see check's own isLeftoverInfix/isLeftover):
+// *.partial.*/*.tmp.* for the infix convention (e.g. "Title.partial.iso"),
+// and a bare *.tmp/*.part extension for chd/rvz/n64/snes's own
+// out+".tmp" temp-file convention (e.g. "Title.chd.tmp") - confirmed
+// against a real rsync dry run that "*.tmp.*" alone does NOT match that
+// second shape (no "." follows "tmp" in it at all), so without this,
+// a leftover from an interrupted conversion would get pushed/pulled
+// like any other file instead of staying put the way every other
+// leftover/pending-cleanup path here does.
 var excludeCommon = []string{
 	"*.sav", "*.srm", "*.state", "*.state[0-9]*", "*.auto",
-	"*.partial.*", "*.tmp.*", "*.romctl-rename.*", "_to_delete/", "_extract.*/",
+	"*.partial.*", "*.tmp.*", "*.tmp", "*.part", "*.romctl-rename.*", "_to_delete/", "_extract.*/",
 }
 
 // excludeBios lists emulator-written data under bios/ that every mirror
