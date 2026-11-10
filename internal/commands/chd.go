@@ -56,6 +56,21 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 	log := cliutil.NewLogger("chd", runner.Format)
 	var converted, skipped, failed atomic.Int64
 
+	// Resolve chdman once, up front, before any mutating action - same
+	// invariant Verify/Collection/Rename already follow (see
+	// resolveCHDManIfNeeded), so a missing chdman is one clear error
+	// before the run starts, not a "chdman not found" failure repeated
+	// once per file as makeCHD's own inner resolve call hits it over and
+	// over. Skipped for --dry-run: nothing in this command ever actually
+	// invokes chdman there (every case below reaches runner.Act, which
+	// returns false and skips the real work, before any chdman call), so
+	// a dry-run preview still works on a machine with no chdman at all.
+	if !runner.DryRun {
+		if _, err := resolveCHDManIfNeeded(systems); err != nil {
+			return false, err
+		}
+	}
+
 	var jobs []chdJob
 	for _, sys := range systems {
 		class := systemdb.ClassOf(sys)

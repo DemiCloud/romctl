@@ -32,6 +32,29 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 	log := cliutil.NewLogger("rvz", runner.Format)
 	var converted, failed atomic.Int64
 
+	// Resolve dolphin-tool once, up front, before any mutating action -
+	// same invariant CHD now follows (see resolveCHDManIfNeeded's own
+	// comment): one clear error before the run starts, not a "dolphin-tool
+	// not found" failure repeated once per file as convertToRVZ's own
+	// inner resolve call hits it over and over. Skipped for --dry-run:
+	// convertToRVZ is only ever reached after runner.Act (which returns
+	// false there, before any real work), so a dry-run preview still
+	// works without dolphin-tool installed at all.
+	if !runner.DryRun {
+		needed := false
+		for _, sys := range systems {
+			if systemdb.ClassOf(sys) == systemdb.ClassDolphin {
+				needed = true
+				break
+			}
+		}
+		if needed {
+			if _, err := tools.Resolve("dolphin-tool"); err != nil {
+				return false, err
+			}
+		}
+	}
+
 	var jobs []rvzJob
 	for _, sys := range systems {
 		if systemdb.ClassOf(sys) != systemdb.ClassDolphin {
