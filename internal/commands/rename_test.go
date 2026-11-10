@@ -68,6 +68,39 @@ func TestRenameAppliesSchemeToM3UDir(t *testing.T) {
 // point: a hash-confirmed file renames straight to the DAT's own
 // canonical name (run through scheme), not a cleaned-up guess based on
 // whatever name it already had.
+// TestRenameAppliesSchemeToPS3Dir guards rename's handling of a
+// Title.ps3/ disc-folder directory as its own naming unit, the same way
+// Title.m3u/ is - previously naming was set once, at unpack time
+// (discimage.UnpackArchives), and never revisited: a scheme change (or
+// just fixing up a name after the fact) never reached an already-built
+// disc folder.
+func TestRenameAppliesSchemeToPS3Dir(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "ps3")
+	oldDir := filepath.Join(sysDir, "Some Game (USA).ps3")
+	usrDir := filepath.Join(oldDir, "PS3_GAME", "USRDIR")
+	if err := os.MkdirAll(usrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(usrDir, "EBOOT.BIN"), []byte("eboot"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := library.Open(root)
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	if err := Rename(lib, runner, []string{"ps3"}, actions.SchemeNoTag, false, false, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists(oldDir) {
+		t.Errorf("old directory %s should no longer exist", oldDir)
+	}
+	newDir := filepath.Join(sysDir, "Some Game.ps3")
+	if _, err := os.Stat(filepath.Join(newDir, "PS3_GAME", "USRDIR", "EBOOT.BIN")); err != nil {
+		t.Errorf("expected the disc folder's contents to have moved untouched: %v", err)
+	}
+}
+
 func TestRenameVerifyDatUsesConfirmedGameName(t *testing.T) {
 	content := []byte("gb-rom-bytes")
 	lib, sysDir := newTestLib(t, map[string]string{"scrambled_name.gb": string(content)})

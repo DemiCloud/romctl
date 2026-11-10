@@ -136,8 +136,13 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 		for _, e := range entries {
 			base := e.Name()
 			if e.IsDir() {
-				if strings.HasSuffix(base, ".m3u") {
+				switch {
+				case strings.HasSuffix(base, ".m3u"):
 					r, f := renameM3UDir(lib, runner, log, sys, sysDir, base, scheme)
+					renamedCount.Add(r)
+					failedCount.Add(f)
+				case strings.HasSuffix(base, ".ps3"):
+					r, f := renameSuffixedDir(lib, runner, log, sys, sysDir, base, ".ps3", scheme)
 					renamedCount.Add(r)
 					failedCount.Add(f)
 				}
@@ -174,6 +179,43 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 		}
 	})
 	return renamedCount.Load(), failedCount.Load()
+}
+
+// renameSuffixedDir applies scheme to a sysDir/base directory whose own
+// name (minus suffix, e.g. ".ps3") is the game's title - the same "one
+// directory is the naming unit" case renameM3UDir handles for a
+// multi-disc playlist, just simpler: nothing inside the directory is
+// itself named after the title (a PS3 disc folder's PS3_GAME/USRDIR/
+// EBOOT.BIN is RPCS3's own fixed internal layout, not title-derived), so
+// only the directory itself ever needs to move. Without this, a
+// Title.ps3/ disc folder's name is set once, at unpack time
+// (discimage.UnpackArchives), and never revisited - the same "naming is
+// creation-time-only" gap renameM3UDir fixed for Title.m3u/.
+func renameSuffixedDir(lib *library.Library, runner *actions.Runner, log *cliutil.Logger, sys, sysDir, base, suffix string, scheme actions.Scheme) (renamed, failed int64) {
+	title := strings.TrimSuffix(base, suffix)
+	clean := actions.ApplyScheme(title, scheme)
+	if clean == title {
+		return 0, 0
+	}
+	src := filepath.Join(sysDir, base)
+	newBase := clean + suffix
+	dst := filepath.Join(sysDir, newBase)
+
+	if same, _ := sameExists(dst, src); exists(dst) && !same {
+		log.Errf("collision, skipped: %s/%s -> %s", sys, base, newBase)
+		return 0, 0
+	}
+	if !runner.Act("rename %s/%s -> %s/", sys, base, newBase) {
+		return 0, 0
+	}
+	if err := actions.RenamePath(src, dst); err != nil {
+		log.Errf("rename failed: %s/%s: %v", sys, base, err)
+		return 0, 1
+	}
+	if err := gamelist.Rename(lib.Root, sys, base, newBase); err != nil {
+		log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+	}
+	return 1, 0
 }
 
 // renameM3UDir applies scheme to the Title.m3u/ playlist directory

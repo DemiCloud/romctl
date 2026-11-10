@@ -148,6 +148,29 @@ func TestCheckFlagsOutOfSchemeM3UDir(t *testing.T) {
 	}
 }
 
+// TestCheckFlagsOutOfSchemePS3Dir is TestCheckFlagsOutOfSchemeM3UDir's
+// counterpart for a Title.ps3/ disc-folder directory - the same "one
+// directory is the naming unit" case, just for PS3 instead of a
+// multi-disc playlist.
+func TestCheckFlagsOutOfSchemePS3Dir(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "roms", "ps3", "Some Game (USA).ps3")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	out := captureStdout(t, func() {
+		Check(lib, []string{"ps3"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if !strings.Contains(out, "Some Game (USA).ps3") || !strings.Contains(out, `naming -> "Some Game.ps3"`) {
+		t.Errorf("expected a naming finding for the out-of-scheme ps3 directory, got:\n%s", out)
+	}
+	if !strings.Contains(out, "rename ps3") {
+		t.Errorf("expected the Fixes table to suggest rename for ps3, got:\n%s", out)
+	}
+}
+
 // TestCheckFlagsInvalidCHDInsideM3UDir guards checkContainerDir's
 // handling of a Title.m3u/ playlist directory: previously it returned
 // immediately for any .m3u directory, so every disc inside an already-
