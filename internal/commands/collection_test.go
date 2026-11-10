@@ -39,6 +39,60 @@ func writeDat(t *testing.T, dir string, haveContent []byte) {
 	}
 }
 
+// TestCollectionMatchesFileInsideM3U confirms Collection walks into a
+// Title.m3u/ playlist directory the same way verify's own CHD walk
+// already does (see verifyJobsFor) instead of silently treating every
+// multi-disc game as if it didn't exist - previously, a file sitting
+// inside Title.m3u/ was never hashed or matched at all, so even a
+// correctly organized multi-disc game would never show as "have".
+func TestCollectionMatchesFileInsideM3U(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "roms", "psx", "Game.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	discContent := []byte("disc-one-content")
+	discPath := filepath.Join(m3uDir, "Game (Disc 1).iso")
+	if err := os.WriteFile(discPath, discContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hc := crc32.NewIEEE()
+	hc.Write(discContent)
+	hm, hs := md5.New(), sha1.New()
+	hm.Write(discContent)
+	hs.Write(discContent)
+	dat := fmt.Sprintf(`<datafile><header><name>Sony - PlayStation</name><version>test</version></header>
+<game name="Have Disc Game"><rom name="Game (Disc 1).iso" size="%d" crc="%08x" md5="%x" sha1="%x"/></game>
+</datafile>`, len(discContent), hc.Sum32(), hm.Sum(nil), hs.Sum(nil))
+	datDir := t.TempDir()
+	redumpDir := filepath.Join(datDir, "redump")
+	if err := os.MkdirAll(redumpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redumpDir, "Sony - PlayStation.dat"), []byte(dat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		ok, err := Collection(lib, []string{"psx"}, datDir, false, false, false, nil, cliutil.FormatPlain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("Collection reported failure")
+		}
+	})
+
+	if !strings.Contains(out, "Have Disc Game") || !strings.Contains(out, "have") {
+		t.Errorf("expected the disc inside Game.m3u/ to be matched as have, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Game.m3u/Game (Disc 1).iso") {
+		t.Errorf("expected the Matched File column to show the m3u-relative label, got:\n%s", out)
+	}
+}
+
 func TestCollection(t *testing.T) {
 	root := t.TempDir()
 	sysDir := filepath.Join(root, "roms", "gb")

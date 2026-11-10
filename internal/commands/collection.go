@@ -122,7 +122,7 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 
 	type sysJob struct {
 		sys   string
-		names []string
+		files []gameFile
 		df    *datdb.Datafile
 	}
 	var jobs []sysJob
@@ -146,19 +146,9 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 			df = stripSidecarROMs(df)
 		}
 		df = filterRegion(df, regions)
-		entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
-		if err != nil {
-			continue
-		}
-		var names []string
-		for _, e := range entries {
-			if e.IsDir() || !hashable(e.Name()) {
-				continue
-			}
-			names = append(names, e.Name())
-		}
-		jobs = append(jobs, sysJob{sys, names, df})
-		total += len(names)
+		files := listGameFiles(filepath.Join(lib.Roms, sys), hashable)
+		jobs = append(jobs, sysJob{sys, files, df})
+		total += len(files)
 	}
 	printDatLoadIssues("collection", datIssues)
 	printNoDatSystems("collection", noDatSystems)
@@ -168,69 +158,67 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	doneSoFar := 0
 	process := func(tick func()) {
 		for _, job := range jobs {
-			sysDir := filepath.Join(lib.Roms, job.sys)
 			class := systemdb.ClassOf(job.sys)
 			var mu sync.Mutex
 			byCRC, byMD5, bySHA1 := map[string]string{}, map[string]string{}, map[string]string{}
 			nameToCRC := map[string]string{}
 			var unverifiable []string
 
-			hashOne := func(name string) bool {
+			hashOne := func(gf gameFile) bool {
 				defer tick()
-				path := filepath.Join(sysDir, name)
 				if class == systemdb.ClassArcade {
-					hashes, err := hashArcadeEntries(path)
+					hashes, err := hashArcadeEntries(gf.path)
 					if err != nil {
 						return false
 					}
 					mu.Lock()
 					for _, h := range hashes {
-						byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
+						byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = gf.label, gf.label, gf.label
 					}
 					mu.Unlock()
 					return true
 				}
-				if strings.ToLower(filepath.Ext(name)) == ".chd" {
+				if strings.ToLower(filepath.Ext(gf.label)) == ".chd" {
 					if verifyCHD && isDiscClass(class) {
-						hashes, err := hashDiscCHD(chdmanPath, path, class)
+						hashes, err := hashDiscCHD(chdmanPath, gf.path, class)
 						if err == nil {
 							mu.Lock()
 							for _, h := range hashes {
-								byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = name, name, name
-								nameToCRC[name] = h.crc
+								byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = gf.label, gf.label, gf.label
+								nameToCRC[gf.label] = h.crc
 							}
 							mu.Unlock()
 							return true
 						}
-						fmt.Fprintf(os.Stderr, "collection: %s/%s: extraction failed, reporting unverifiable: %v\n", job.sys, name, err)
+						fmt.Fprintf(os.Stderr, "collection: %s/%s: extraction failed, reporting unverifiable: %v\n", job.sys, gf.label, err)
 					}
 					mu.Lock()
-					unverifiable = append(unverifiable, name)
+					unverifiable = append(unverifiable, gf.label)
 					mu.Unlock()
 					return true
 				}
-				crc, md5sum, sha1sum, err := hashROM(path)
+				crc, md5sum, sha1sum, err := hashROM(gf.path)
 				if err != nil {
 					return false
 				}
 				mu.Lock()
-				byCRC[crc], byMD5[md5sum], bySHA1[sha1sum] = name, name, name
-				nameToCRC[name] = crc
+				byCRC[crc], byMD5[md5sum], bySHA1[sha1sum] = gf.label, gf.label, gf.label
+				nameToCRC[gf.label] = crc
 				mu.Unlock()
 				return true
 			}
 
 			switch {
 			case live:
-				cliutil.ParallelLive(format, job.names, func(name string) string { return job.sys + "/" + name }, hashOne)
+				cliutil.ParallelLive(format, job.files, func(gf gameFile) string { return job.sys + "/" + gf.label }, hashOne)
 			case verbose:
-				for i, name := range job.names {
-					fmt.Printf("[%d/%d] hash %s/%s\n", doneSoFar+i+1, total, job.sys, name)
-					hashOne(name)
+				for i, gf := range job.files {
+					fmt.Printf("[%d/%d] hash %s/%s\n", doneSoFar+i+1, total, job.sys, gf.label)
+					hashOne(gf)
 				}
-				doneSoFar += len(job.names)
+				doneSoFar += len(job.files)
 			default:
-				cliutil.Parallel(job.names, func(name string) { hashOne(name) })
+				cliutil.Parallel(job.files, func(gf gameFile) { hashOne(gf) })
 			}
 
 			display := systemdb.DisplayNameWith(job.sys, esdeNames)
@@ -240,8 +228,8 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 				}
 				rows = append(rows, collectionRowFor(job.sys, display, m, nameToCRC, colors))
 			}
-			for _, name := range unverifiable {
-				rows = append(rows, collectionRow{System: display, Directory: job.sys, Game: name, Status: statusColor("unverifiable", colors), Matched: "-", Hash: "-"})
+			for _, label := range unverifiable {
+				rows = append(rows, collectionRow{System: display, Directory: job.sys, Game: label, Status: statusColor("unverifiable", colors), Matched: "-", Hash: "-"})
 			}
 		}
 	}
@@ -332,19 +320,11 @@ func filterRegion(df *datdb.Datafile, wanted []string) *datdb.Datafile {
 // canonical DAT name to show instead, and a "no dat" status distinct
 // from have/missing/unverifiable - this was never attempted, not failed.
 func listOnlyRows(lib *library.Library, sys string, esdeNames map[string]string, colors cliutil.Colors) []collectionRow {
-	entries, err := os.ReadDir(filepath.Join(lib.Roms, sys))
-	if err != nil {
-		return nil
-	}
 	display := systemdb.DisplayNameWith(sys, esdeNames)
 	var rows []collectionRow
-	for _, e := range entries {
-		if e.IsDir() || !hashable(e.Name()) {
-			continue
-		}
-		name := e.Name()
-		game := strings.TrimSuffix(name, filepath.Ext(name))
-		rows = append(rows, collectionRow{System: display, Directory: sys, Game: game, Status: statusColor("no dat", colors), Matched: name, Hash: "-"})
+	for _, gf := range listGameFiles(filepath.Join(lib.Roms, sys), hashable) {
+		game := strings.TrimSuffix(gf.label, filepath.Ext(gf.label))
+		rows = append(rows, collectionRow{System: display, Directory: sys, Game: game, Status: statusColor("no dat", colors), Matched: gf.label, Hash: "-"})
 	}
 	return rows
 }

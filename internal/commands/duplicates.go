@@ -49,58 +49,46 @@ func Dupes(lib *library.Library, systems []string, verbose bool, format cliutil.
 
 	type sysFiles struct {
 		sys   string
-		names []string
+		files []gameFile
 	}
 	var bySys []sysFiles
 	total := 0
 	for _, sys := range systems {
-		sysDir := filepath.Join(lib.Roms, sys)
-		entries, err := os.ReadDir(sysDir)
-		if err != nil {
-			continue
-		}
-		var names []string
-		for _, e := range entries {
-			if e.IsDir() || !hashable(e.Name()) {
-				continue
-			}
-			names = append(names, e.Name())
-		}
-		report.Scan(audit.CategoryDuplicates, len(names))
-		bySys = append(bySys, sysFiles{sys, names})
-		total += len(names)
+		files := listGameFiles(filepath.Join(lib.Roms, sys), hashable)
+		report.Scan(audit.CategoryDuplicates, len(files))
+		bySys = append(bySys, sysFiles{sys, files})
+		total += len(files)
 	}
 
 	live := verbose && cliutil.CanAnimate(format)
 	doneSoFar := 0
 	process := func(tick func()) {
 		for _, sf := range bySys {
-			sysDir := filepath.Join(lib.Roms, sf.sys)
 			var mu sync.Mutex
 			byHash := map[uint32][]string{}
-			hashOne := func(name string) bool {
-				sum, err := crc32File(filepath.Join(sysDir, name))
+			hashOne := func(gf gameFile) bool {
+				sum, err := crc32File(gf.path)
 				tick()
 				if err != nil {
 					return false
 				}
 				mu.Lock()
-				byHash[sum] = append(byHash[sum], name)
+				byHash[sum] = append(byHash[sum], gf.label)
 				mu.Unlock()
 				return true
 			}
 
 			switch {
 			case live:
-				cliutil.ParallelLive(format, sf.names, func(name string) string { return sf.sys + "/" + name }, hashOne)
+				cliutil.ParallelLive(format, sf.files, func(gf gameFile) string { return sf.sys + "/" + gf.label }, hashOne)
 			case verbose:
-				for i, name := range sf.names {
-					fmt.Printf("[%d/%d] hash %s/%s\n", doneSoFar+i+1, total, sf.sys, name)
-					hashOne(name)
+				for i, gf := range sf.files {
+					fmt.Printf("[%d/%d] hash %s/%s\n", doneSoFar+i+1, total, sf.sys, gf.label)
+					hashOne(gf)
 				}
-				doneSoFar += len(sf.names)
+				doneSoFar += len(sf.files)
 			default:
-				cliutil.Parallel(sf.names, func(name string) { hashOne(name) })
+				cliutil.Parallel(sf.files, func(gf gameFile) { hashOne(gf) })
 			}
 
 			hashes := make([]uint32, 0, len(byHash))
@@ -109,14 +97,14 @@ func Dupes(lib *library.Library, systems []string, verbose bool, format cliutil.
 			}
 			sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
 			for _, h := range hashes {
-				names := byHash[h]
-				if len(names) < 2 {
+				labels := byHash[h]
+				if len(labels) < 2 {
 					continue
 				}
-				sort.Strings(names)
-				for _, name := range names[1:] {
-					report.Add(audit.Warn, audit.CategoryDuplicates, sf.sys, name,
-						fmt.Sprintf("identical to %s (CRC32 %08X)", names[0], h), "")
+				sort.Strings(labels)
+				for _, label := range labels[1:] {
+					report.Add(audit.Warn, audit.CategoryDuplicates, sf.sys, label,
+						fmt.Sprintf("identical to %s (CRC32 %08X)", labels[0], h), "")
 				}
 			}
 		}
