@@ -8,7 +8,7 @@ import (
 )
 
 func newRenameCmd() *cobra.Command {
-	cmd := newHiddenStepCmd("rename [SYSTEM...|all]", "apply the configured naming scheme to loose files")
+	cmd := newHiddenStepCmd("rename [SYSTEM...|all]", "apply the configured naming scheme")
 	cmd.Flags().String("naming", "", "")
 	cmd.Flags().Bool("verify-dat", false, "")
 	cmd.Flags().String("dat-dir", "", "")

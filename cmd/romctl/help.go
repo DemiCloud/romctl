@@ -76,7 +76,7 @@ var commandTable = map[string]cmdInfo{
 	"list":       {"list every known system, its directory, and its class", "", []string{flagFormat}},
 	"games":      {"list populated systems and game counts", "[SYSTEM...|all]", []string{flagRoot, flagGames, flagFormat}},
 	"fix":        {"run every local fix step", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagDest, flagFormat}},
-	"rename":     {"apply the configured naming scheme to loose files", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagVerifyDat, flagDatDir, flagVerifyCHD, flagFormat}},
+	"rename":     {"apply the configured naming scheme", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagVerifyDat, flagDatDir, flagVerifyCHD, flagFormat}},
 	"unpack":     {"extract single-file archives (cartridge/N64/SNES/GC/Wii/Xbox)", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"chd":        {"convert disc images to CHD", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagNaming, flagFormat}},
 	"m3u":        {"group loose multi-disc CHDs into a playlist directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
