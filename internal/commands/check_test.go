@@ -125,6 +125,29 @@ func TestCheckFixesNamesTheRootFlagWhenExplicit(t *testing.T) {
 // cartridge ROM (bare .bin, no .cue/.gdi/.iso alongside it) sitting in
 // roms/segacd/ should be flagged with a "relocate" fix, not silently
 // treated as just another disc-image candidate.
+// TestCheckFlagsOutOfSchemeM3UDir guards checkNaming's handling of a
+// Title.m3u/ multi-disc playlist directory as its own naming unit -
+// previously checkNaming skipped every directory outright, so an
+// out-of-scheme multi-disc game was never flagged at all, even though
+// rename (renameM3UDir) now actually fixes it.
+func TestCheckFlagsOutOfSchemeM3UDir(t *testing.T) {
+	lib := scratchLibrary(t)
+	m3uDir := filepath.Join(lib.Roms, "psx", "Final Fantasy VII (USA).m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if !strings.Contains(out, "Final Fantasy VII (USA).m3u") || !strings.Contains(out, `naming -> "Final Fantasy VII.m3u"`) {
+		t.Errorf("expected a naming finding for the out-of-scheme m3u directory, got:\n%s", out)
+	}
+	if !strings.Contains(out, "rename psx") {
+		t.Errorf("expected the Fixes table to suggest rename for psx, got:\n%s", out)
+	}
+}
+
 func TestCheckFlagsMisfiledCartridgeROM(t *testing.T) {
 	lib := scratchLibrary(t)
 	segaDir := filepath.Join(lib.Roms, "segacd")

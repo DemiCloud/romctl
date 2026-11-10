@@ -12,6 +12,58 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 )
 
+// TestRenameAppliesSchemeToM3UDir guards rename's handling of a
+// Title.m3u/ multi-disc playlist directory as one naming unit, the same
+// way a bare file is everywhere else: the directory itself, every disc
+// inside, and the playlist's own contents must all move together under
+// a scheme change - previously rename silently skipped every directory,
+// so a multi-disc game could never be renamed after being grouped.
+func TestRenameAppliesSchemeToM3UDir(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "psx")
+	oldDir := filepath.Join(sysDir, "Final Fantasy VII (USA).m3u")
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(oldDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Final Fantasy VII (USA) (Disc 01).chd", "disc-one")
+	write("Final Fantasy VII (USA) (Disc 02).chd", "disc-two")
+	write("Final Fantasy VII (USA).m3u",
+		"Final Fantasy VII (USA) (Disc 01).chd\nFinal Fantasy VII (USA) (Disc 02).chd\n")
+
+	lib := library.Open(root)
+	runner := &actions.Runner{Format: cliutil.FormatPlain}
+	if err := Rename(lib, runner, []string{"psx"}, actions.SchemeNoTag, false, false, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists(oldDir) {
+		t.Errorf("old directory %s should no longer exist", oldDir)
+	}
+	newDir := filepath.Join(sysDir, "Final Fantasy VII.m3u")
+	for _, name := range []string{
+		"Final Fantasy VII (Disc 01).chd",
+		"Final Fantasy VII (Disc 02).chd",
+		"Final Fantasy VII.m3u",
+	} {
+		if _, err := os.Stat(filepath.Join(newDir, name)); err != nil {
+			t.Errorf("expected %s inside the renamed directory: %v", name, err)
+		}
+	}
+	playlist, err := os.ReadFile(filepath.Join(newDir, "Final Fantasy VII.m3u"))
+	if err != nil {
+		t.Fatalf("reading renamed playlist: %v", err)
+	}
+	want := "Final Fantasy VII (Disc 01).chd\nFinal Fantasy VII (Disc 02).chd\n"
+	if string(playlist) != want {
+		t.Errorf("playlist content = %q, want %q", playlist, want)
+	}
+}
+
 // TestRenameVerifyDatUsesConfirmedGameName guards --verify-dat's main
 // point: a hash-confirmed file renames straight to the DAT's own
 // canonical name (run through scheme), not a cleaned-up guess based on

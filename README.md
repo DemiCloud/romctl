@@ -220,7 +220,7 @@ falls back to disk when it isn't safe to use.
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
-| `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm - on by default for cartridge systems, off for disc. See [Naming](#naming). |
+| `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files and `Title.m3u/` multi-disc directories alike. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm - on by default for cartridge systems, off for disc. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
 | `m3u` | Group loose `Title (Disc N).chd`/`Title (Disc N).rvz` files into `Title.m3u/`. |
@@ -601,6 +601,16 @@ Independent of `scheme`:
   `Legend of Zelda, The - The Minish Cap` (skipped entirely under `keep`).
 - Sidecar files (`.ips`, `.sbi`, `.cheats`) share the ROM's base name and are
   renamed with it.
+- A `Title.m3u/` multi-disc directory is one naming unit, the same as a
+  bare file: the directory itself, every disc inside, and the playlist's
+  own contents all get renamed together. This is the plain scheme-cleanup
+  path only (every disc inside is still matched against a DAT by
+  `collection`/`identify`, and `rename`'s own default `--verify-dat`
+  handling, individually - see
+  [Collection](#collection-havemissing-against-a-dat) - but explicitly
+  passing `--verify-dat` for a disc-class system doesn't yet rename a
+  multi-disc game's directory as a DAT-confirmed unit the way a single
+  file does).
 - Arcade systems are never renamed: filenames are set names that the
   emulator resolves.
 - romctl never picks one region's dump over another on your behalf; see

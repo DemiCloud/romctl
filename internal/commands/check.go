@@ -105,10 +105,20 @@ func checkNaming(report *audit.Report, lib *library.Library, sys string, scheme 
 		return
 	}
 	for _, e := range entries {
+		base := e.Name()
 		if e.IsDir() {
+			// A Title.m3u/ playlist directory is a multi-disc game's naming
+			// unit, same as a bare file is for everything else - rename
+			// handles both (see renameM3UDir).
+			if strings.HasSuffix(base, ".m3u") {
+				report.Scan(audit.CategoryNaming, 1)
+				title := strings.TrimSuffix(base, ".m3u")
+				if clean := actions.ApplyScheme(title, scheme); clean != title {
+					report.Add(audit.Warn, audit.CategoryNaming, sys, base, fmt.Sprintf("naming -> %q", clean+".m3u"), "rename")
+				}
+			}
 			continue
 		}
-		base := e.Name()
 		if base == "systeminfo.txt" || base == ".directory" || isLeftoverInfix(base) {
 			continue
 		}

@@ -115,6 +115,12 @@ func isCartridgeClass(class systemdb.Class) bool {
 
 // renamePlain is Rename's instant path: no hashing, no DAT, just
 // scheme cleanup - used for every system splitRenameSystems routes here.
+// A Title.m3u/ directory is renamed too (see renameM3UDir): a multi-disc
+// game is "one ROM" the same way a bare file is everywhere else in
+// romctl's model, so a scheme change should reach it whether or not it's
+// already been grouped into a playlist - there's no reason tied to *when*
+// chd/m3u created the directory that a later scheme rename shouldn't
+// still apply to it.
 func renamePlain(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme) (renamed, failed int64) {
 	log := cliutil.NewLogger("rename", runner.Format)
 	var renamedCount, failedCount atomic.Int64
@@ -128,10 +134,15 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 			return
 		}
 		for _, e := range entries {
+			base := e.Name()
 			if e.IsDir() {
+				if strings.HasSuffix(base, ".m3u") {
+					r, f := renameM3UDir(lib, runner, log, sys, sysDir, base, scheme)
+					renamedCount.Add(r)
+					failedCount.Add(f)
+				}
 				continue
 			}
-			base := e.Name()
 			if base == "systeminfo.txt" || strings.HasPrefix(base, ".") {
 				continue
 			}
@@ -163,6 +174,92 @@ func renamePlain(lib *library.Library, runner *actions.Runner, systems []string,
 		}
 	})
 	return renamedCount.Load(), failedCount.Load()
+}
+
+// renameM3UDir applies scheme to the Title.m3u/ playlist directory
+// sysDir/base. ApplyScheme already preserves a "(Disc N)" tag verbatim
+// wherever it appears in a name (see actions.CleanName/extractSchemeTags),
+// so it's applied independently to the bare directory title and to each
+// disc's own full filename, same as any other rename in this package -
+// no special-case disc-tag handling needed here. Moving the pieces
+// together: every disc file is renamed first (while the directory still
+// has its old, stable path), the playlist's own text content is rewritten
+// to reference the renamed discs, the playlist file itself is renamed to
+// match the new title, and only then is the directory itself renamed -
+// gamelist.Rename follows, same as every other rename in this package,
+// since a multi-disc game is scraped by its playlist/directory name, not
+// any one disc (see gamelist's own doc comment and scrape.go). A failure
+// partway through (a disc rename error) leaves some discs renamed and the
+// directory/playlist not yet moved; re-running rename is safe and
+// self-heals, since an already-renamed disc's name is already a no-op
+// for ApplyScheme the second time through.
+func renameM3UDir(lib *library.Library, runner *actions.Runner, log *cliutil.Logger, sys, sysDir, base string, scheme actions.Scheme) (renamed, failed int64) {
+	title := strings.TrimSuffix(base, ".m3u")
+	clean := actions.ApplyScheme(title, scheme)
+	if clean == title {
+		return 0, 0
+	}
+	dir := filepath.Join(sysDir, base)
+	newBase := clean + ".m3u"
+	newDir := filepath.Join(sysDir, newBase)
+
+	if same, _ := sameExists(newDir, dir); exists(newDir) && !same {
+		log.Errf("collision, skipped: %s/%s -> %s", sys, base, newBase)
+		return 0, 0
+	}
+	if !runner.Act("rename %s/%s -> %s/", sys, base, newBase) {
+		return 0, 0
+	}
+
+	discs, err := os.ReadDir(dir)
+	if err != nil {
+		log.Errf("read failed: %s: %v", dir, err)
+		return 0, 1
+	}
+	playlistName := title + ".m3u"
+	playlist := filepath.Join(dir, playlistName)
+	data, err := os.ReadFile(playlist)
+	if err != nil {
+		log.Errf("read playlist failed: %s: %v", playlist, err)
+		return 0, 1
+	}
+	content := string(data)
+
+	for _, d := range discs {
+		name := d.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if d.IsDir() || name == playlistName || (ext != ".chd" && ext != ".rvz") {
+			continue
+		}
+		discClean := actions.ApplyScheme(strings.TrimSuffix(name, filepath.Ext(name)), scheme)
+		newName := discClean + filepath.Ext(name)
+		if newName == name {
+			continue
+		}
+		if err := actions.RenamePath(filepath.Join(dir, name), filepath.Join(dir, newName)); err != nil {
+			log.Errf("rename failed: %s/%s/%s: %v", sys, base, name, err)
+			return 0, 1
+		}
+		content = strings.ReplaceAll(content, name, newName)
+	}
+
+	if err := os.WriteFile(playlist, []byte(content), 0o644); err != nil {
+		log.Errf("rewrite playlist failed: %s: %v", playlist, err)
+		return 0, 1
+	}
+	newPlaylist := filepath.Join(dir, newBase)
+	if err := actions.RenamePath(playlist, newPlaylist); err != nil {
+		log.Errf("rename failed: %s/%s: %v", sys, playlistName, err)
+		return 0, 1
+	}
+	if err := actions.RenamePath(dir, newDir); err != nil {
+		log.Errf("rename failed: %s/%s: %v", sys, base, err)
+		return 0, 1
+	}
+	if err := gamelist.Rename(lib.Root, sys, base, newBase); err != nil {
+		log.Errf("gamelist update failed: %s/%s: %v", sys, base, err)
+	}
+	return 1, 0
 }
 
 // renameVerified is Rename's --verify-dat path: a per-system hash-and-
