@@ -191,7 +191,15 @@ func checkM3uDir(report *audit.Report, sys, dirPath string) {
 	entries, _ := os.ReadDir(dirPath)
 	discs := 0
 	for _, e := range entries {
-		if filepath.Join(dirPath, e.Name()) != playlist {
+		base := e.Name()
+		switch {
+		case filepath.Join(dirPath, base) == playlist:
+			continue
+		case base == "_to_delete":
+			report.Add(audit.Info, audit.CategoryStructure, sys, filepath.Join(name, base), "pending deletion", "clean")
+		case strings.HasPrefix(base, "_extract."):
+			report.Add(audit.Fail, audit.CategoryStructure, sys, filepath.Join(name, base), "leftover extraction directory", "")
+		default:
 			discs++
 		}
 	}
@@ -271,18 +279,21 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string, esd
 		report.Scan(audit.CategoryContainers, 1)
 		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
-			checkContainerDir(report, sys, class, path)
+			checkContainerDir(report, sys, class, path, esdeNames)
 		} else {
-			checkContainerFile(report, sys, class, path, esdeNames)
+			checkContainerFile(report, sys, class, path, base, esdeNames)
 		}
 	}
 }
 
-func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, dirPath string) {
+func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, dirPath string, esdeNames map[string]string) {
 	base := filepath.Base(dirPath)
 	switch {
-	case base == "_to_delete", strings.HasPrefix(base, "_extract."), strings.HasSuffix(base, ".m3u"):
+	case base == "_to_delete", strings.HasPrefix(base, "_extract."):
 		return // checkStructureDir's territory
+	case strings.HasSuffix(base, ".m3u"):
+		checkM3uContainers(report, sys, class, dirPath, esdeNames)
+		return
 	}
 	switch class {
 	case systemdb.ClassCD, systemdb.ClassDVD:
@@ -300,8 +311,38 @@ func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, d
 	}
 }
 
-func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath string, esdeNames map[string]string) {
-	base := filepath.Base(filePath)
+// checkM3uContainers runs checkContainerFile against every disc inside a
+// Title.m3u/ playlist directory (dirPath) - the same container/format
+// validation (invalid CHD header, wrong CD/DVD type, a wrong-system
+// signature, ...) a bare file gets, just labeled "Title.m3u/Disc.ext" so
+// a finding still names exactly which disc. The playlist text file
+// itself is skipped (nothing to validate as a disc); checkStructureDir's
+// own checkM3uDir already covers playlist/disc-count consistency
+// separately. Previously checkContainerDir returned immediately for any
+// .m3u directory, so every disc inside an already-grouped multi-disc
+// game - often a library's biggest, most valuable titles - was entirely
+// invisible to check: a corrupt header or a CD/DVD-type mismatch there
+// could only ever be caught by the much heavier verify command, and
+// verify doesn't even check CD/DVD type at all.
+func checkM3uContainers(report *audit.Report, sys string, class systemdb.Class, dirPath string, esdeNames map[string]string) {
+	base := filepath.Base(dirPath)
+	playlistName := strings.TrimSuffix(base, ".m3u") + ".m3u"
+	discs, err := os.ReadDir(dirPath)
+	if err != nil {
+		return
+	}
+	for _, d := range discs {
+		name := d.Name()
+		if d.IsDir() || name == playlistName {
+			continue
+		}
+		report.Scan(audit.CategoryContainers, 1)
+		checkContainerFile(report, sys, class, filepath.Join(dirPath, name), filepath.Join(base, name), esdeNames)
+	}
+}
+
+func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath, label string, esdeNames map[string]string) {
+	base := label
 	if isLeftoverInfix(base) {
 		return // checkStructureFile's territory
 	}

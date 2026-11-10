@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,34 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
 )
+
+// writeFakeCDAsDVDImageCHD writes a minimal v5 CHD header plus one CHT2
+// metadata entry describing a single MODE1/2048 track - the exact shape
+// internal/formats/chd.Classify recognizes as KindCDAsDVDMAGE (a DVD
+// image mistakenly stored as a CD-type CHD), without needing a real
+// chdman-built file.
+func writeFakeCDAsDVDImageCHD(t *testing.T, path string) {
+	t.Helper()
+	const metaOffset = 124
+	data := []byte("TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:100")
+	entry := make([]byte, 16)
+	copy(entry[0:4], "CHT2")
+	length := len(data)
+	entry[5] = byte(length >> 16)
+	entry[6] = byte(length >> 8)
+	entry[7] = byte(length)
+
+	header := make([]byte, metaOffset)
+	copy(header[0:8], "MComprHD")
+	binary.BigEndian.PutUint32(header[12:16], 5)
+	binary.BigEndian.PutUint64(header[48:56], uint64(metaOffset))
+
+	buf := append(header, entry...)
+	buf = append(buf, data...)
+	if err := os.WriteFile(path, buf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestFindByExtRecursesIntoSubfolders guards against a regression: many
 // redump/no-intro archives wrap a disc image's .cue/.bin pair in one
@@ -129,5 +158,37 @@ func TestCHDRefusesMisfiledCartridgeROM(t *testing.T) {
 	}
 	if exists(filepath.Join(segaDir, "ALTERED_.chd")) {
 		t.Error("a CHD should never have been produced from the misfiled ROM")
+	}
+}
+
+// TestCHDDryRunReencodesNestedM3UCHD guards the DVD re-encode pass
+// actually looking inside a Title.m3u/ playlist directory for a CD-type-
+// mistake CHD, not just among a system's top-level files - previously a
+// multi-disc PS2/PSP game already grouped into a playlist was invisible
+// to this pass entirely, so it could never get fixed once grouped.
+// --dry-run only: the plan: line below comes from chd.Classify (pure Go,
+// no chdman needed); actually performing the re-encode does need a real
+// chdman, same as every other chdman-backed path in this test file.
+func TestCHDDryRunReencodesNestedM3UCHD(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "roms", "ps2", "Game.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCDAsDVDImageCHD(t, filepath.Join(m3uDir, "Game (Disc 01).chd"))
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+
+	runner := &actions.Runner{Format: cliutil.FormatPlain, DryRun: true}
+	out := captureStdout(t, func() {
+		if _, err := CHD(lib, runner, []string{"ps2"}, actions.SchemeKeep); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want := "re-encode ps2/Game.m3u/Game (Disc 01).chd as DVD CHD"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected a plan to re-encode the nested disc (%q), got:\n%s", want, out)
 	}
 }

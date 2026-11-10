@@ -222,7 +222,7 @@ falls back to disk when it isn't safe to use.
 | `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files and `Title.m3u/` multi-disc directories alike. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm - on by default for cartridge systems, off for disc. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
-| `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command. |
+| `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command, and this includes a disc already grouped into a `Title.m3u/` directory, not just top-level files. |
 | `m3u` | Group loose `Title (Disc N).chd`/`Title (Disc N).rvz` files into `Title.m3u/`. |
 | `n64` | Normalize `.v64`/`.n64` byte orders to big-endian `.z64`. |
 | `snes` | Strip 512-byte copier headers; rename `.smc` to `.sfc`. |
@@ -232,7 +232,7 @@ falls back to disk when it isn't safe to use.
 | `saves` | Move stray save/save-state files out of `roms/` into RetroDECK's own `saves/`/`states/` at the library root. See [Stray save files](#stray-save-files). |
 | `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
-| `clean` | Permanently delete `_to_delete/` directories (asks for confirmation once, for everything it's about to delete). |
+| `clean` | Permanently delete `_to_delete/` directories, including one nested inside a `Title.m3u/` multi-disc directory (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump/FBNeo DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
 

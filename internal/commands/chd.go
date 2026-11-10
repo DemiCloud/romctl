@@ -68,6 +68,17 @@ func CHD(lib *library.Library, runner *actions.Runner, systems []string, scheme 
 			continue
 		}
 		names := entryNames(entries)
+		if class == systemdb.ClassDVD {
+			// A multi-disc PS2/PSP game already grouped into a Title.m3u/
+			// directory can still hold a CD-type CHD from before this
+			// system had the CD/DVD distinction - the case ".chd" branch
+			// below checks those too, the same "make this system's CHDs
+			// correct" pass as everything else here, not a separate
+			// command. Nothing else in this file's job list needs to see
+			// inside a Title.m3u/ directory: a disc already converted to
+			// CHD and grouped needs no other kind of (re-)conversion.
+			names = append(names, nestedM3UCHDs(sysDir, entries)...)
+		}
 		for i, base := range names {
 			jobs = append(jobs, chdJob{sys, class, base, i, len(names)})
 		}
@@ -241,6 +252,31 @@ func entryNames(entries []os.DirEntry) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// nestedM3UCHDs returns every .chd inside a Title.m3u/ playlist directory
+// under sysDir, labeled "Title.m3u/Disc.chd" - entries is sysDir's own
+// already-read directory listing, reused rather than re-read.
+func nestedM3UCHDs(sysDir string, entries []os.DirEntry) []string {
+	var out []string
+	for _, e := range entries {
+		base := e.Name()
+		if !e.IsDir() || !strings.HasSuffix(base, ".m3u") {
+			continue
+		}
+		discs, err := os.ReadDir(filepath.Join(sysDir, base))
+		if err != nil {
+			continue
+		}
+		for _, d := range discs {
+			if d.IsDir() || strings.ToLower(filepath.Ext(d.Name())) != ".chd" {
+				continue
+			}
+			out = append(out, filepath.Join(base, d.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // chdMode picks createcd vs createdvd for an image in a given system class.

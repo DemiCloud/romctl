@@ -10,23 +10,33 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 )
 
-// Clean permanently deletes every system's _to_delete/ directory. Unlike
-// every other command, this step is not reversible, so it asks for
-// confirmation before actually deleting unless assumeYes is set
+// Clean permanently deletes every system's _to_delete/ directory, plus
+// any _to_delete/ nested one level deeper inside a Title.m3u/ multi-disc
+// directory (chd's DVD re-encode pass retires a replaced CD-type CHD
+// right next to it, inside the playlist directory, same as any other
+// conversion retires a replaced original beside it - see reencodeAsDVD).
+// Unlike every other command, this step is not reversible, so it asks
+// for confirmation before actually deleting unless assumeYes is set
 // (non-interactive runs, e.g. CI, never delete without it: Confirm
 // defaults to "no" when stdin isn't a terminal).
 func Clean(lib *library.Library, runner *actions.Runner, systems []string, assumeYes bool) error {
 	log := cliutil.NewLogger("clean", runner.Format)
 
 	type target struct {
-		sys, dir string
-		size     int64
+		sys, dir, label string
+		size            int64
 	}
 	var targets []*target
 	for _, sys := range systems {
-		dir := filepath.Join(lib.Roms, sys, "_to_delete")
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			targets = append(targets, &target{sys: sys, dir: dir})
+		sysDir := filepath.Join(lib.Roms, sys)
+		if dir := filepath.Join(sysDir, "_to_delete"); exists(dir) {
+			targets = append(targets, &target{sys: sys, dir: dir, label: filepath.Join(sys, "_to_delete")})
+		}
+		nested, _ := filepath.Glob(filepath.Join(sysDir, "*.m3u", "_to_delete"))
+		for _, dir := range nested {
+			if rel, err := filepath.Rel(lib.Roms, dir); err == nil {
+				targets = append(targets, &target{sys: sys, dir: dir, label: rel})
+			}
 		}
 	}
 	if len(targets) == 0 {
@@ -50,7 +60,7 @@ func Clean(lib *library.Library, runner *actions.Runner, systems []string, assum
 	var toDelete []*target
 	var total int64
 	for _, t := range targets {
-		if !runner.Act("delete %s/_to_delete (%s)", t.sys, humanSize(t.size)) {
+		if !runner.Act("delete %s (%s)", t.label, humanSize(t.size)) {
 			continue
 		}
 		toDelete = append(toDelete, t)
