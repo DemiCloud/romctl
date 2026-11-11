@@ -62,7 +62,10 @@ func (l *Library) RequireRoms() error {
 
 // ResolveSystems expands system arguments to directory names under roms/:
 // no arguments or "all" means every directory under roms/, otherwise each
-// name is validated to exist.
+// name is validated to exist. A dot-prefixed directory (RetroDECK's own
+// roms/.sync/, holding its favorites-sync staging file - confirmed
+// against a real library) is never a real system, regardless: skipped
+// the same way a dotfile inside a system's own directory already is.
 func (l *Library) ResolveSystems(args []string) ([]string, error) {
 	if len(args) == 0 || args[0] == "all" {
 		entries, err := os.ReadDir(l.Roms)
@@ -71,7 +74,7 @@ func (l *Library) ResolveSystems(args []string) ([]string, error) {
 		}
 		systems := make([]string, 0, len(entries))
 		for _, e := range entries {
-			if e.IsDir() {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 				systems = append(systems, e.Name())
 			}
 		}
@@ -94,7 +97,9 @@ func (l *Library) ResolveSystems(args []string) ([]string, error) {
 
 // existingSystems lists the actual directories under Roms, for Suggest to
 // match a typo'd system name against - a suggestion naming a directory
-// that doesn't actually exist would be worse than no suggestion at all.
+// that doesn't actually exist (or isn't really a system - see
+// ResolveSystems on dot-prefixed directories) would be worse than no
+// suggestion at all.
 func (l *Library) existingSystems() []string {
 	entries, err := os.ReadDir(l.Roms)
 	if err != nil {
@@ -102,7 +107,7 @@ func (l *Library) existingSystems() []string {
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			names = append(names, e.Name())
 		}
 	}
