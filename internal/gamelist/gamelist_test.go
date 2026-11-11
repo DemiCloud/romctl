@@ -223,6 +223,40 @@ func TestRenameWithoutESDEIsNoop(t *testing.T) {
 	}
 }
 
+// TestStaleEntriesFindsOnlyMissingFiles guards the exact gap Skyscraper's
+// own gamelist generation leaves open (see StaleEntries's doc comment):
+// an entry for a file that's still present must never be reported, only
+// one whose file is actually gone.
+func TestStaleEntriesFindsOnlyMissingFiles(t *testing.T) {
+	root := t.TempDir()
+	gl := filepath.Join(root, "ES-DE", "gamelists", "psx", "gamelist.xml")
+	writeFile(t, gl, `<gameList>
+	<game><path>./Present Game.chd</path></game>
+	<game><path>./Gone Game.chd</path></game>
+</gameList>
+`)
+	writeFile(t, filepath.Join(root, "roms", "psx", "Present Game.chd"), "fake chd")
+
+	stale, err := StaleEntries(root, "psx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0] != "Gone Game.chd" {
+		t.Errorf("StaleEntries() = %v, want [\"Gone Game.chd\"]", stale)
+	}
+}
+
+func TestStaleEntriesNoGamelistIsNoop(t *testing.T) {
+	root := t.TempDir()
+	stale, err := StaleEntries(root, "psx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale != nil {
+		t.Errorf("StaleEntries() = %v, want nil", stale)
+	}
+}
+
 // TestRenameConcurrentSameSystem guards against the lost-update race
 // patchGamelist's read-modify-write would otherwise hit once conversion
 // commands started converting a system's files concurrently (see

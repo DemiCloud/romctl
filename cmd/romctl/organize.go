@@ -39,6 +39,16 @@ func newRelocateCmd() *cobra.Command {
 	return cmd
 }
 
+func newPruneCmd() *cobra.Command {
+	cmd := newMutatingCmd("prune [SYSTEM...|all]", "remove gamelist entries for ROMs no longer on disk")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
+			return commands.Prune(appCtx.lib, runner, systems)
+		})
+	}
+	return cmd
+}
+
 func newSavesCmd() *cobra.Command {
 	cmd := newHiddenStepCmd("saves [SYSTEM...|all]", "move stray save/state files out of roms/ into saves/, states/")
 	cmd.Flags().String("dest", "", "")

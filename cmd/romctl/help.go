@@ -50,7 +50,7 @@ type cmdInfo struct {
 
 var commandOrder = []string{
 	"check", "bios", "dupes", "verify", "collection", "identify", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
-	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "clean", "sync", "tools",
+	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "prune", "clean", "sync", "tools",
 }
 
 // commandGroups orders commandOrder's same names into sections for the
@@ -62,7 +62,7 @@ var commandGroups = []struct {
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Other:", []string{"bios", "dupes", "verify", "collection", "identify", "system", "scrape", "clean", "tools"}},
+	{"Other:", []string{"bios", "dupes", "verify", "collection", "identify", "system", "scrape", "prune", "clean", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
@@ -88,6 +88,7 @@ var commandTable = map[string]cmdInfo{
 	"saves":      {"move stray save/state files out of roms/ into saves/, states/", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagDest, flagFormat}},
 	"relocate":   {"move a misfiled cartridge ROM into its correct system directory", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"scrape":     {"fetch game metadata/media via Skyscraper", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagScrapeUser, flagScrapeThreads, flagFormat}},
+	"prune":      {"remove gamelist entries for ROMs no longer on disk", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagFormat}},
 	"clean":      {"permanently delete _to_delete/ directories", "[SYSTEM...|all]", []string{flagRoot, flagDryRun, flagVerbose, flagYes, flagFormat}},
 	"sync":       {"mirror roms/bios/media to a device", "[roms|bios|media...]", []string{flagRoot, flagDryRun, flagPull, flagSyncHost, flagSyncUser, flagSyncPath, flagSyncExclude}},
 	"tools":      {"report native tool availability", "", []string{flagFormat}},

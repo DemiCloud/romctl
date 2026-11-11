@@ -72,17 +72,18 @@ func Rename(libRoot, sys, oldRel, newRel string) error {
 
 // Remove deletes the <game> entry (and any downloaded_media files) whose
 // <path> matches rel (relative to roms/<sys>/) from sys's gamelist.xml,
-// if either exists under libRoot/ES-DE/. Unlike Rename, this is for a ROM
-// moving to a *different* system entirely (see commands.Relocate, which
-// moves a misfiled cartridge ROM into its correct system's directory):
-// there's nothing legitimate to carry over into the destination system's
-// own gamelist, since any scrape made under the wrong platform was for
-// the wrong game context to begin with - a real-world case, not a
-// theoretical one (a Genesis cart dropped into dreamcast/ picks up a
-// bogus-or-absent scrape there, and a stale entry would otherwise sit in
-// dreamcast's gamelist pointing at a path that no longer exists). A ROM
-// that was never scraped is not an error: both steps are a silent no-op,
-// same as Rename.
+// if either exists under libRoot/ES-DE/. Unlike Rename, this is for a rel
+// that has nowhere left to legitimately point: either it moved to a
+// *different* system entirely (see commands.Relocate, which moves a
+// misfiled cartridge ROM into its correct system's directory - any scrape
+// made under the wrong platform was for the wrong game context to begin
+// with), or the file is simply gone from disk altogether (see
+// commands.Prune, driven by StaleEntries - a ROM deleted, merged away, or
+// deduped by some means other than romctl's own tracked
+// rename/convert/relocate). Either way, a stale entry left sitting in the
+// gamelist pointing at a path that no longer exists there is a real case,
+// not a theoretical one. A ROM that was never scraped is not an error:
+// both steps are a silent no-op, same as Rename.
 func Remove(libRoot, sys, rel string) error {
 	lockAny, _ := renameLocks.LoadOrStore(libRoot+"\x00"+sys, &sync.Mutex{})
 	lock := lockAny.(*sync.Mutex)
@@ -100,6 +101,43 @@ func Remove(libRoot, sys, rel string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// StaleEntries returns, for every <game> in sys's gamelist.xml, the ROM
+// path (relative to roms/<sys>/) whose file no longer exists on disk -
+// the input commands.Prune acts on. Skyscraper's own gamelist generation
+// never does this itself (confirmed against a real run: its generate
+// pass reloads and rewrites every field of an existing gamelist.xml, but
+// still leaves an entry for a now-missing file in place), since it
+// always merges with whatever gamelist.xml already has rather than
+// trusting only what it can see on disk - this is for a ROM that
+// disappeared by some means other than romctl's own tracked
+// rename/convert/relocate (which already call Rename/Remove themselves
+// the moment they touch a file), most often a manual delete or library
+// merge/dedup done outside romctl entirely. A system with no
+// gamelist.xml yet is not an error: nil, nil, same "never scraped"
+// no-op every other function in this package already treats as
+// unremarkable.
+func StaleEntries(libRoot, sys string) ([]string, error) {
+	path := filepath.Join(libRoot, "ES-DE", "gamelists", sys, "gamelist.xml")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var stale []string
+	for _, m := range pathRE.FindAllSubmatch(data, -1) {
+		rel := strings.TrimPrefix(xmlUnescaper.Replace(string(m[1])), "./")
+		if rel == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(libRoot, "roms", sys, rel)); os.IsNotExist(err) {
+			stale = append(stale, rel)
+		}
+	}
+	return stale, nil
 }
 
 // removeGamelistEntry deletes the whole <game>...</game> block (plus its
@@ -149,12 +187,15 @@ func removeGamelistEntry(libRoot, sys, rel string) error {
 // instead of moving. A permanent delete, not a Retire into _to_delete/,
 // is the deliberate choice here despite romctl's general "nothing is
 // deleted outright" rule (see AGENTS.md): that rule exists because a
-// replaced ROM original has real recovery value, but art scraped for a
-// ROM under the *wrong* platform (Remove's only caller) never correctly
-// represents anything to begin with, and clean has no notion of a
-// _to_delete/ anywhere under ES-DE/downloaded_media/ to ever collect it
-// from - retiring it here would just be permanent clutter with no path
-// back to actually being cleaned up, strictly worse than deleting it.
+// replaced ROM original has real recovery value, but Remove's two
+// callers both have nothing worth keeping - art scraped for a ROM under
+// the *wrong* platform (Relocate's case) never correctly represented
+// anything to begin with, and art for a ROM that's simply gone from disk
+// (Prune's case) no longer has a file to represent at all - and clean
+// has no notion of a _to_delete/ anywhere under ES-DE/downloaded_media/
+// to ever collect it from either way - retiring it here would just be
+// permanent clutter with no path back to actually being cleaned up,
+// strictly worse than deleting it.
 func removeMedia(libRoot, sys, rel string) error {
 	mediaRoot := filepath.Join(libRoot, "ES-DE", "downloaded_media", sys)
 	types, err := os.ReadDir(mediaRoot)

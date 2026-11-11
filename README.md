@@ -219,7 +219,7 @@ falls back to disk when it isn't safe to use.
 | `identify` | Identify one or more arbitrary files - not a system - against every embedded (or `--dat-dir`-overridden) No-Intro/Redump/FBNeo DAT at once. Read-only; never renames anything. See [Identify: what is this file?](#identify-what-is-this-file). |
 | `system list` | List every known system, its `roms/` directory, and its class, whether or not it's populated. |
 | `system games` | List populated systems (full name, game count). `-g`/`--games` also lists each title. Full names come from the library's own `systems.txt` (see below) when present, else romctl's own table. |
-| `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`sync`/`clean`, which need credentials, a device, or confirmation. |
+| `fix` | Run every local fix step below in order (`relocate`, `unpack`, `chd`, `rvz`, `xiso`, `n64`, `snes`, `ps3`, `m3u`, `rename`, `saves`) in one command. Excludes `scrape`/`prune`/`sync`/`clean`, which need credentials, a device, scraped metadata to act on, or confirmation. |
 | `rename` | Apply the configured naming scheme (`[naming] scheme`) to loose files, `Title.m3u/` multi-disc directories, and `Title.ps3/` disc folders alike. `--verify-dat` hash-confirms against a DAT first and uses its name when confirmed, falling back to the plain scheme cleanup for anything it can't confirm - on by default for cartridge systems, off for disc. See [Naming](#naming). |
 | `unpack` | Extract single-file archives in cartridge, N64, SNES, GameCube/Wii and Xbox systems. CD/DVD/UMD-class systems and PS3 extract their own archives as part of conversion (`chd`, `ps3`); arcade sets are never unpacked. |
 | `chd` | Convert game directories, archives and loose `.cue`/`.gdi`/`.iso`/`.cso` to CHD. Multi-disc games become a `.m3u` directory. Also re-encodes an existing CHD that was made CD-type before a DVD-class system (e.g. PS2) had that distinction, as proper DVD-type - same "make this system's CHDs correct" pass, not a separate command, and this includes a disc already grouped into a `Title.m3u/` directory, not just top-level files. |
@@ -232,6 +232,7 @@ falls back to disk when it isn't safe to use.
 | `saves` | Move stray save/save-state files out of `roms/` into RetroDECK's own `saves/`/`states/` at the library root. See [Stray save files](#stray-save-files). |
 | `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
+| `prune` | Remove `gamelist.xml` entries (and their `downloaded_media` files) for ROMs no longer on disk - the cleanup Skyscraper's own gamelist generation never does on its own. See [Scraping](#scraping). |
 | `clean` | Permanently delete `_to_delete/` directories, including one nested inside a `Title.m3u/` multi-disc directory (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump/FBNeo DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
@@ -570,6 +571,15 @@ roms/psx/Final Fantasy VII.m3u/
 The playlist lists one disc filename per line, relative to the directory.
 Disc numbers are zero-padded so they sort correctly.
 
+A loose `Title (Disc N).ext` file with no sibling disc number present is
+ambiguous on filename alone: it could be mid-grouping, or it could be a
+single-disc game whose name just happens to carry a `(Disc 1)` tag. `check`
+confirms which one by hashing that one file and checking it against the
+embedded DAT - if the DAT shows the game genuinely has more discs than this
+one, it's reported as an **incomplete disc set** (acquire the rest, or delete
+what you have) instead of the usual "belongs in a `.m3u` directory" `fix: m3u`
+suggestion, which wouldn't actually fix anything here.
+
 ### Naming
 
 How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit treat
@@ -837,6 +847,22 @@ one), not just synthetic/unmatched data.
 `covers`/`screenshots`/`marquees`/`wheels` as raw, uncomposited images;
 manuals, videos and a few other media types ES-DE can use aren't wired up
 yet.
+
+### Pruning stale entries
+
+If a ROM disappears by some means other than romctl itself (deleted by
+hand, or dropped while merging/deduping two libraries together), its
+`gamelist.xml` entry and media are left behind - Skyscraper's own gamelist
+generation reloads and rewrites an existing `gamelist.xml`, but still
+keeps an entry for a file it can no longer find rather than dropping it,
+since it merges with whatever's already there instead of trusting only
+what's on disk. `romctl prune` removes those dangling entries (and their
+`downloaded_media` files) before a rescrape or sync:
+
+```sh
+romctl prune --dry-run      # preview which entries would be removed
+romctl prune                # do it
+```
 
 ## Syncing to a device
 

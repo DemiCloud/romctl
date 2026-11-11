@@ -9,6 +9,7 @@ import (
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/cliutil"
+	"github.com/demicloud/romctl/internal/datdb"
 	"github.com/demicloud/romctl/internal/library"
 )
 
@@ -397,5 +398,218 @@ func TestCheckCategorySplitStillFindsEveryKind(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestDiscGroupKeyStripsDiscAndTrackTags(t *testing.T) {
+	cases := map[string]string{
+		"Title (Disc 1)":                           "Title",
+		"Title (USA) (Disc 2)":                     "Title (USA)",
+		"Title (USA) (Disc 1) (Track 1)":           "Title (USA)",
+		"Resident Evil 2 (USA) (Disc 1) (Track 1)": "Resident Evil 2 (USA)",
+		"Resident Evil 2 (USA) (Disc 1) (Track 2)": "Resident Evil 2 (USA)",
+	}
+	for in, want := range cases {
+		if got := discGroupKey(in); got != want {
+			t.Errorf("discGroupKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBuildDiscGroupsGroupsSiblingDiscsAndTracks(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		"Title (USA) (Disc 1).chd",
+		"Title (USA) (Disc 2).chd",
+		"Other (Disc 1) (Track 1).bin",
+		"Other (Disc 1) (Track 2).bin",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := buildDiscGroups(entries)
+
+	titleGroup := groups[discGroupKey("Title (USA) (Disc 1)")]
+	if len(titleGroup) != 2 {
+		t.Fatalf("Title group = %+v, want 2 entries (Disc 1, Disc 2)", titleGroup)
+	}
+
+	otherGroup := groups[discGroupKey("Other (Disc 1) (Track 1)")]
+	if len(otherGroup) != 2 {
+		t.Fatalf("Other group = %+v, want 2 entries (Track 1, Track 2 of the same disc)", otherGroup)
+	}
+	for _, f := range otherGroup {
+		if f.num != 1 {
+			t.Errorf("Other group entry %+v, want disc num 1 for both tracks", f)
+		}
+	}
+}
+
+// discSetTestDAT is a synthetic 2-disc Redump-shaped DAT: each disc is
+// its own <game>, crc filled in per-test with the real CRC32 of whatever
+// content that test writes to disk, so matchIncompleteDiscSet's hashing
+// is exercised for real rather than mocked.
+func discSetTestDAT(disc1CRC, disc2CRC string) string {
+	return `<?xml version="1.0"?>
+<datafile>
+  <header><name>test</name></header>
+  <game name="Test Game (USA) (Disc 1)">
+    <rom name="Test Game (USA) (Disc 1).bin" size="4" crc="` + disc1CRC + `"/>
+  </game>
+  <game name="Test Game (USA) (Disc 2)">
+    <rom name="Test Game (USA) (Disc 2).bin" size="4" crc="` + disc2CRC + `"/>
+  </game>
+</datafile>`
+}
+
+func TestMatchIncompleteDiscSetConfirmsMissingDisc(t *testing.T) {
+	disc1 := []byte("disc one data")
+	disc2 := []byte("disc two data")
+	df, err := datdb.Parse([]byte(discSetTestDAT(crc32Hex(disc1), crc32Hex(disc2))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sysDir := t.TempDir()
+	base := "Test Game (USA) (Disc 1).bin"
+	if err := os.WriteFile(filepath.Join(sysDir, base), disc1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if !confirmed {
+		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true (hash should match disc 1)")
+	}
+	if !strings.Contains(msg, "incomplete disc set") || !strings.Contains(msg, "missing 2") {
+		t.Errorf("msg = %q, want it to mention the incomplete set and missing disc 2", msg)
+	}
+}
+
+func TestMatchIncompleteDiscSetSingleDiscGameIsClean(t *testing.T) {
+	// The DAT's matched title has no sibling disc entries at all (a
+	// single-disc game whose local filename just happens to carry a
+	// "(Disc 1)" tag) - confirmed, but nothing wrong to report.
+	disc1 := []byte("solo disc data")
+	df, err := datdb.Parse([]byte(`<?xml version="1.0"?>
+<datafile><header><name>test</name></header>
+<game name="Solo Game (USA)"><rom name="Solo Game (USA).bin" size="4" crc="` + crc32Hex(disc1) + `"/></game>
+</datafile>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sysDir := t.TempDir()
+	base := "Solo Game (USA) (Disc 1).bin"
+	if err := os.WriteFile(filepath.Join(sysDir, base), disc1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if !confirmed {
+		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true")
+	}
+	if msg != "" {
+		t.Errorf("msg = %q, want empty - DAT shows this is a single-disc game", msg)
+	}
+}
+
+func TestMatchIncompleteDiscSetUnconfirmedWhenNoHashMatch(t *testing.T) {
+	df, err := datdb.Parse([]byte(discSetTestDAT("deadbeef", "cafef00d")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sysDir := t.TempDir()
+	base := "Test Game (USA) (Disc 1).bin"
+	if err := os.WriteFile(filepath.Join(sysDir, base), []byte("unrelated content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if confirmed {
+		t.Error("matchIncompleteDiscSet() confirmed = true, want false - no hash in the DAT matches this file")
+	}
+}
+
+// TestCheckStillFlagsSiblingDiscPairAsNeedingM3U is a regression guard
+// for the DAT-aware incomplete-disc-set check added alongside this: two
+// loose discs of the same title, different disc numbers both present,
+// must still get the plain, cheap "belongs in a .m3u directory" message
+// - the DAT lookup is only for the no-sibling case.
+func TestCheckStillFlagsSiblingDiscPairAsNeedingM3U(t *testing.T) {
+	root := t.TempDir()
+	psxDir := filepath.Join(root, "roms", "psx")
+	if err := os.MkdirAll(psxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Game (USA) (Disc 1).chd", "Game (USA) (Disc 2).chd"} {
+		if err := os.WriteFile(filepath.Join(psxDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if !strings.Contains(out, "belongs in a .m3u directory") {
+		t.Errorf("expected the sibling-disc pair to still be flagged as needing m3u, got:\n%s", out)
+	}
+	if strings.Contains(out, "incomplete disc set") {
+		t.Errorf("sibling-disc pair should not be flagged as an incomplete set, got:\n%s", out)
+	}
+}
+
+// TestCheckFallsBackToM3UMessageWithNoDAT guards the fallback path: a
+// lone disc-tagged file in a system with no DatSource entry at all must
+// still get the old, unconditional "belongs in a .m3u directory"
+// message - there's nothing to confirm or rule out without a DAT.
+func TestCheckFallsBackToM3UMessageWithNoDAT(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "faketestsystem123")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysDir, "Lone Game (USA) (Disc 1).bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		Check(lib, []string{"faketestsystem123"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if !strings.Contains(out, "belongs in a .m3u directory") {
+		t.Errorf("expected the lone disc to fall back to the m3u message with no DAT available, got:\n%s", out)
+	}
+}
+
+// TestCheckReportsLoneDiscOnceDespiteMultipleTrackFiles guards against
+// double-reporting: a raw multi-track CD dump with no .cue sheet splits
+// one disc into several files (see discTrackTagRE) - both share the
+// same disc number, so they're one incomplete-set verdict, not two
+// identical findings.
+func TestCheckReportsLoneDiscOnceDespiteMultipleTrackFiles(t *testing.T) {
+	root := t.TempDir()
+	sysDir := filepath.Join(root, "roms", "faketestsystem123")
+	if err := os.MkdirAll(sysDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"Lone Game (USA) (Disc 1) (Track 1).bin",
+		"Lone Game (USA) (Disc 1) (Track 2).bin",
+	} {
+		if err := os.WriteFile(filepath.Join(sysDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib := library.Open(root)
+	out := captureStdout(t, func() {
+		Check(lib, []string{"faketestsystem123"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if n := strings.Count(out, "belongs in a .m3u directory"); n != 1 {
+		t.Errorf("expected exactly one finding for the two track files of one disc, got %d in:\n%s", n, out)
 	}
 }

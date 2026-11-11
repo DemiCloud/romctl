@@ -5,11 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/audit"
 	"github.com/demicloud/romctl/internal/cliutil"
+	"github.com/demicloud/romctl/internal/datdb"
 	"github.com/demicloud/romctl/internal/formats/chd"
 	"github.com/demicloud/romctl/internal/formats/iso9660"
 	"github.com/demicloud/romctl/internal/formats/n64"
@@ -144,6 +147,7 @@ func checkStructure(report *audit.Report, lib *library.Library, sys string) {
 	if err != nil {
 		return
 	}
+	discGroups := buildDiscGroups(entries)
 	for _, e := range entries {
 		base := e.Name()
 		if base == "systeminfo.txt" || base == ".directory" {
@@ -154,7 +158,7 @@ func checkStructure(report *audit.Report, lib *library.Library, sys string) {
 		if e.IsDir() {
 			checkStructureDir(report, sys, path)
 		} else {
-			checkStructureFile(report, sys, class, path)
+			checkStructureFile(report, sys, class, path, sysDir, discGroups)
 		}
 	}
 }
@@ -238,9 +242,63 @@ func checkUnknownSystems(report *audit.Report, lib *library.Library, systems []s
 	}
 }
 
-var discTagRE = regexp.MustCompile(`\(Disc \d+\)`)
+var discTagRE = regexp.MustCompile(`\(Disc (\d+)\)`)
 
-func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath string) {
+// discTrackTagRE matches a "(Track N)" sidecar tag - a raw multi-track CD
+// dump with no .cue sheet splits one disc into several bin files this
+// way (e.g. "Title (Disc 1) (Track 1).bin", "... (Track 2).bin"), which
+// discGroupKey strips alongside the disc tag so every track of the same
+// disc collapses into one group entry instead of looking like several
+// different discs.
+var discTrackTagRE = regexp.MustCompile(`\(Track \d+\)`)
+
+// discFile is one "(Disc N)"-tagged file found by buildDiscGroups: num is
+// its own disc number, base its filename.
+type discFile struct {
+	num  int
+	base string
+}
+
+// discGroupKey is name (without extension) with its "(Disc N)" tag and
+// any "(Track M)" sidecar tag removed, collapsing the whitespace either
+// leaves behind - the key buildDiscGroups and checkIncompleteDiscSet
+// group same-title files/DAT entries under, regardless of disc or track
+// number.
+func discGroupKey(name string) string {
+	key := discTagRE.ReplaceAllString(name, "")
+	key = discTrackTagRE.ReplaceAllString(key, "")
+	return strings.Join(strings.Fields(key), " ")
+}
+
+// buildDiscGroups scans sysDir's top-level files for "(Disc N)"-tagged
+// names, grouping them by discGroupKey. checkStructureFile uses this to
+// tell a loose disc that already has a sibling disc number present (an
+// ordinary "needs m3u" case) apart from one with no sibling at all - the
+// anomaly checkIncompleteDiscSet is gated behind, since that's the only
+// case cheap filename matching alone can't resolve on its own.
+func buildDiscGroups(entries []os.DirEntry) map[string][]discFile {
+	groups := map[string][]discFile{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		base := e.Name()
+		name := strings.TrimSuffix(base, filepath.Ext(base))
+		m := discTagRE.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		num, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		key := discGroupKey(name)
+		groups[key] = append(groups[key], discFile{num, base})
+	}
+	return groups
+}
+
+func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath, sysDir string, discGroups map[string][]discFile) {
 	base := filepath.Base(filePath)
 	if isLeftoverInfix(base) {
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "incomplete conversion leftover; delete it", "")
@@ -261,10 +319,157 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 		return
 	}
 	name := strings.TrimSuffix(base, filepath.Ext(base))
-	if discTagRE.MatchString(name) {
+	m := discTagRE.FindStringSubmatch(name)
+	if m == nil {
+		return
+	}
+	key := discGroupKey(name)
+	group := discGroups[key]
+	nums := map[int]bool{}
+	for _, f := range group {
+		nums[f.num] = true
+	}
+	if len(nums) > 1 {
 		report.Add(audit.Warn, audit.CategoryStructure, sys, base,
 			"loose multi-disc file; belongs in a .m3u directory", "m3u")
+		return
 	}
+	// Lone disc, no sibling disc number present - worth the one DAT
+	// lookup checkIncompleteDiscSet does (see its own doc comment): find
+	// out whether this game genuinely has more discs than this one,
+	// rather than assuming every "(Disc N)"-tagged file is mid-group.
+	//
+	// group holds every file of this one disc number (os.ReadDir's own
+	// sorted order, preserved by buildDiscGroups) - more than one for a
+	// raw multi-track CD dump with no .cue sheet (see discTrackTagRE).
+	// Only group[0] reports anything: the whole group shares one verdict
+	// (complete/incomplete), so a second identical finding for its other
+	// track file(s) would just be noise, not new information.
+	if base != group[0].base {
+		return
+	}
+	num, _ := strconv.Atoi(m[1])
+	if msg, confirmed := checkIncompleteDiscSet(sys, sysDir, num, group); confirmed {
+		if msg != "" {
+			report.Add(audit.Warn, audit.CategoryStructure, sys, base, msg, "")
+		}
+		return
+	}
+	report.Add(audit.Warn, audit.CategoryStructure, sys, base,
+		"loose multi-disc file; belongs in a .m3u directory", "m3u")
+}
+
+// checkIncompleteDiscSet is the gated, DAT-aware follow-up for a lone
+// "(Disc N)"-tagged file checkStructureFile's cheap filename check
+// already found has no sibling disc number on disk: a disc-tagged file
+// in that position is just as likely to be a single-disc game whose name
+// happens to carry a "(Disc 1)" tag as it is to be genuinely missing the
+// rest of a multi-disc set, and filenames alone can't tell those apart.
+// Hashing+DAT-matching only this one file (never a whole system's worth)
+// keeps this cheap enough to run unconditionally: the expensive part
+// only ever happens on the rare file it's actually needed for.
+//
+// confirmed is false (caller falls back to the generic "belongs in a
+// .m3u directory" message, same as before this check existed) when
+// there's no embedded DAT for sys, the file is a .chd/.rvz/.cso romctl
+// would need chdman/dolphin-tool to get raw content out of (check never
+// shells out to an external tool - that's verify's job), or none of this
+// disc's own file(s) hash-match anything in the DAT at all. When
+// confirmed is true, msg is either the "incomplete disc set" finding
+// text, or "" when the DAT itself shows this title has only ever had one
+// disc - nothing wrong to report, and an improvement over the old
+// unconditional "belongs in a .m3u directory" guess for that case.
+// filesForDisc is every file sharing the same title and num's disc
+// number - more than one for a raw multi-track CD dump with no .cue
+// sheet (see discTrackTagRE).
+func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile) (msg string, confirmed bool) {
+	switch strings.ToLower(filepath.Ext(filesForDisc[0].base)) {
+	case ".chd", ".rvz", ".cso":
+		return "", false
+	}
+	df, ok, err := datdb.Load(sys, "")
+	if !ok || err != nil {
+		return "", false
+	}
+	return matchIncompleteDiscSet(df, sysDir, num, filesForDisc)
+}
+
+// matchIncompleteDiscSet is checkIncompleteDiscSet's DAT-independent
+// core (split out so it's testable against a synthetic datdb.Datafile,
+// not just whatever's actually embedded/staged): hash filesForDisc,
+// find which df Game they belong to, then compare the DAT's own total
+// disc count for that title against the single disc number already
+// known to be present.
+func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesForDisc []discFile) (msg string, confirmed bool) {
+	var title string
+	matched := false
+	for _, f := range filesForDisc {
+		crc, md5sum, sha1sum, err := hashROM(filepath.Join(sysDir, f.base))
+		if err != nil {
+			continue
+		}
+		if name, ok := datMatchByHash(df, crc, md5sum, sha1sum); ok {
+			title, matched = name, true
+			break
+		}
+	}
+	if !matched {
+		return "", false
+	}
+
+	canonical := discGroupKey(title)
+	expected := map[int]bool{}
+	for _, g := range df.Games {
+		name := g.Name
+		if g.Description != "" {
+			name = g.Description
+		}
+		if discGroupKey(name) != canonical {
+			continue
+		}
+		if m := discTagRE.FindStringSubmatch(name); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				expected[n] = true
+			}
+		}
+	}
+	if len(expected) <= 1 {
+		return "", true
+	}
+
+	var missing []int
+	for n := range expected {
+		if n != num {
+			missing = append(missing, n)
+		}
+	}
+	sort.Ints(missing)
+	parts := make([]string, len(missing))
+	for i, n := range missing {
+		parts[i] = strconv.Itoa(n)
+	}
+	return fmt.Sprintf("incomplete disc set (%s): have disc %d of %d, missing %s",
+		canonical, num, len(expected), strings.Join(parts, ", ")), true
+}
+
+// datMatchByHash finds the Game in df whose any single ROM's CRC/MD5/
+// SHA1 matches crc/md5sum/sha1sum, preferring Description over Name the
+// same way datdb.Match does. Unlike Match's own have() check (every ROM
+// of a Game must be present to count as a match), one matching track of
+// a multi-track disc is enough here: the goal is only "what title does
+// this already-flagged file belong to," not a full ownership verdict.
+func datMatchByHash(df *datdb.Datafile, crc, md5sum, sha1sum string) (name string, ok bool) {
+	for _, g := range df.Games {
+		for _, r := range g.ROMs {
+			if (crc != "" && r.CRC == crc) || (md5sum != "" && r.MD5 == md5sum) || (sha1sum != "" && r.SHA1 == sha1sum) {
+				if g.Description != "" {
+					return g.Description, true
+				}
+				return g.Name, true
+			}
+		}
+	}
+	return "", false
 }
 
 func checkContainers(report *audit.Report, lib *library.Library, sys string, esdeNames map[string]string) {

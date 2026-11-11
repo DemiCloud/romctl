@@ -309,6 +309,14 @@ var explanations = []struct {
 	{"leftover extraction directory", "Leftover extraction dir", func(p string) string {
 		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
 	}},
+	// Checked before the bare "incomplete" entry below: this finding's
+	// own message also contains that word ("incomplete disc set"), and
+	// explain/explainLabel take the first substring match - without this
+	// ordering, every incomplete-disc-set finding would be misreported as
+	// a stray leftover file instead.
+	{"incomplete disc set", "Incomplete disc set", func(p string) string {
+		return fmt.Sprintf("%s is missing disc(s) from its set - acquire the rest, or delete what you have", p)
+	}},
 	{"incomplete", "Incomplete leftover file", func(p string) string {
 		return fmt.Sprintf("delete %s manually; left over from an interrupted run", p)
 	}},

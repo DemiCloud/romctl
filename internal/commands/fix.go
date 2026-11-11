@@ -79,9 +79,11 @@ func relevantSteps(steps []fixStep, systems []string) []fixStep {
 // own doc comment, not a separate step), group any loose multi-disc CHDs
 // that convert didn't already group itself, apply the naming scheme last
 // (once every file has settled into its final extension), then relocate
-// stray saves. scrape and sync are deliberately excluded - both need
-// credentials/network/an explicit device and are their own command, not
-// an implicit side effect of "fix everything local".
+// stray saves. scrape, prune and sync are deliberately excluded: scrape
+// and sync both need credentials/network/an explicit device, and prune
+// acts on already-scraped gamelist.xml data fix has no reason to assume
+// exists yet - all three are their own command, not an implicit side
+// effect of "fix everything local".
 func fixSteps(lib *library.Library, runner *actions.Runner, systems []string, scheme actions.Scheme, savesDest string) []fixStep {
 	return []fixStep{
 		{"relocate", func() (bool, error) { return Relocate(lib, runner, systems) }},

@@ -190,6 +190,29 @@ func TestFixesCollapsesManyNonBiosFindingsUnderOneLabel(t *testing.T) {
 	}
 }
 
+// TestFixesDoesNotMisreportIncompleteDiscSetAsLeftoverFile guards an
+// explanations-ordering bug: an "incomplete disc set" finding's own
+// message contains the word "incomplete", the same substring the
+// generic "Incomplete leftover file" entry matches on. Without the more
+// specific entry checked first, every incomplete-disc-set finding would
+// get mislabeled as a stray leftover file, with the wrong fix text.
+func TestFixesDoesNotMisreportIncompleteDiscSetAsLeftoverFile(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.Add(Warn, CategoryStructure, "psx", "Game (Disc 1).bin",
+		"incomplete disc set (Game): have disc 1 of 2, missing 2", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+	if !rowContains(got, "Incomplete disc set") {
+		t.Errorf("expected the specific \"Incomplete disc set\" label, got:\n%s", got)
+	}
+	if strings.Contains(got, "Incomplete leftover file") || strings.Contains(got, "left over from an interrupted run") {
+		t.Errorf("incomplete disc set finding was misreported as a leftover file, got:\n%s", got)
+	}
+}
+
 func TestFixesFallsBackToRawMessageWhenNoExplanationMatches(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, false, cliutil.FormatPlain, "")
