@@ -607,6 +607,16 @@ no sibling into a one-file `Title.m3u/` directory in the first place, since
 that's equally likely to be a single-disc game as a genuinely incomplete
 one, and either way it would make the file harder to re-examine later.
 
+A loose `.bin`/`.img` with no `.cue` sheet anywhere in the same directory is
+its own finding too - **missing cue sheet** - rather than a silent pass:
+`chdman` always needs a cue to know a disc's track layout, so a bare `.bin`
+alone isn't just unconverted, it's permanently unconvertible by `chd` until
+a `.cue` exists for it. A cue doesn't have to share its bin's exact
+filename to count - a multi-track dump's bins are routinely named
+`Title (Track 1).bin`/`Title (Track 2).bin` while the cue itself is just
+`Title.cue` - `check` reads each `.cue`'s own `FILE` line(s) rather than
+matching by filename.
+
 ### Naming
 
 How `rename`, `chd`/`ps3`'s output naming, and `check`'s naming audit treat

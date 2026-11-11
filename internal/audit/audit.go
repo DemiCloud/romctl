@@ -344,6 +344,9 @@ var explanations = []struct {
 	{"disc file(s) but", "Playlist count mismatch", func(p string) string {
 		return fmt.Sprintf("check %s against its actual disc files; counts don't match", p)
 	}},
+	{"no matching .cue sheet", "Missing cue sheet", func(p string) string {
+		return fmt.Sprintf("%s has no .cue sheet; chd can't convert it - re-acquire it with one", p)
+	}},
 	{"identical to", "Duplicate file", func(p string) string {
 		return fmt.Sprintf("remove %s; it's an exact duplicate of another file already kept", p)
 	}},

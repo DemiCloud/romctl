@@ -146,6 +146,25 @@ Key `internal/` packages:
   was `collection --verify-chd --missing`. `check`/`discs` now cover this
   case directly (see above), but `m3u` still refuses to create a new one
   like it going forward regardless - there was never a good reason to.
+- **A loose `.bin`/`.img` with no matching `.cue` sheet is its own
+  containers finding, not a silent pass.** `chdman createcd` always
+  needs a cue sheet to know a disc's track layout - a bare `.bin` alone
+  is permanently unconvertible by `chd`, not just not-yet-converted, and
+  check's own `checkContainerFile` used to return out of that case with
+  no finding at all (same branch as the ordinary, correctly-paired
+  `.bin`/`.img` chd already handles via its own `.cue`). Confirmed
+  against a real library: 8 loose `.bin` files with zero accompanying
+  `.cue` at all, most with no `(Disc N)` tag to make them stand out any
+  other way. `loadCueReferences` reads every `.cue` already found in the
+  system's directory listing (cheap - tiny text files, not an
+  extraction) and collects the filename(s) each one's own `FILE` line(s)
+  reference; a `.bin`/`.img` is only flagged when nothing references it.
+  Matching by the cue's own `FILE` directive, not by filename stem, is
+  deliberate: chdman resolves a cue's referenced file by the name
+  written inside it, not by the cue and bin sharing a basename, and a
+  real multi-track dump routinely names its bin files
+  `"Title (Track N).bin"` while the cue itself is just `"Title.cue"` -
+  stem-matching alone would falsely flag that legitimate pairing.
 - **`check`'s Fixes table names whether romctl can actually fix a given
   issue itself.** The `Auto-Fix` column is `yes` only for a row backed by
   a real romctl command (`knownFixes`, e.g. `m3u`/`chd`/`rename`); every

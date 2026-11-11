@@ -720,6 +720,7 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string, esd
 	if err != nil {
 		return
 	}
+	cueRefs := loadCueReferences(sysDir, entries)
 	for _, e := range entries {
 		base := e.Name()
 		if base == "systeminfo.txt" || base == ".directory" {
@@ -739,8 +740,43 @@ func checkContainers(report *audit.Report, lib *library.Library, sys string, esd
 			continue
 		}
 		report.Scan(audit.CategoryContainers, 1)
-		checkContainerFile(report, sys, class, path, base, esdeNames)
+		checkContainerFile(report, sys, class, path, base, esdeNames, cueRefs)
 	}
+}
+
+// cueFileLineRE matches a cue sheet's "FILE "name.bin" BINARY" directive
+// (any TYPE keyword, case-insensitive) - the one line that actually says
+// which binary file a .cue sheet goes with.
+var cueFileLineRE = regexp.MustCompile(`(?i)^\s*FILE\s+"([^"]+)"`)
+
+// loadCueReferences reads every .cue file already found in sysDir's
+// entries and returns the set of filenames (lowercased basename only)
+// any of them references on a FILE line - the real test for whether a
+// loose .bin/.img has a usable cue sheet. chdman itself resolves a
+// cue's FILE directive by the name written inside it, not by matching
+// basenames with the .cue file itself - a "Title.cue" can legitimately
+// reference a same-or-differently-named .bin, and a multi-track dump's
+// own bin files are routinely named "Title (Track N).bin" while the cue
+// is just "Title.cue" - so pairing by filename stem alone would both
+// miss real pairs and falsely flag others. A .cue with no readable FILE
+// line (unusual, but not a reason to crash) contributes nothing.
+func loadCueReferences(sysDir string, entries []os.DirEntry) map[string]bool {
+	refs := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".cue" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sysDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if m := cueFileLineRE.FindStringSubmatch(line); m != nil {
+				refs[strings.ToLower(filepath.Base(m[1]))] = true
+			}
+		}
+	}
+	return refs
 }
 
 func checkContainerDir(report *audit.Report, sys string, class systemdb.Class, dirPath string, esdeNames map[string]string) {
@@ -794,11 +830,15 @@ func checkM3uContainers(report *audit.Report, sys string, class systemdb.Class, 
 			continue
 		}
 		report.Scan(audit.CategoryContainers, 1)
-		checkContainerFile(report, sys, class, filepath.Join(dirPath, name), filepath.Join(base, name), esdeNames)
+		// nil cueRefs: a disc already grouped inside a Title.m3u/
+		// directory is always a .chd/.rvz (m3u only ever groups those
+		// formats), never a loose .bin that could need a cue sheet - the
+		// map read below is nil-safe (always false) either way.
+		checkContainerFile(report, sys, class, filepath.Join(dirPath, name), filepath.Join(base, name), esdeNames, nil)
 	}
 }
 
-func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath, label string, esdeNames map[string]string) {
+func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, filePath, label string, esdeNames map[string]string, cueRefs map[string]bool) {
 	base := label
 	if isLeftoverInfix(base) {
 		return // checkStructureFile's territory
@@ -829,6 +869,15 @@ func checkContainerFile(report *audit.Report, sys string, class systemdb.Class, 
 		report.Add(audit.Warn, audit.CategoryContainers, sys, base, "archive; store bare", "unpack")
 	case "cd:cue", "cd:gdi", "cd:iso", "cd:bin", "cd:img", "cd:ccd", "cd:mds", "cd:toc", "cd:zip", "cd:7z", "cd:rar":
 		if ext == "bin" || ext == "img" {
+			// Paired with a .cue, chd already handles this file via that
+			// cue sheet (chdman resolves it by name, not by this file
+			// existing on its own) - nothing to report. Unpaired, there's
+			// no cue sheet at all for chdman to work from: not just
+			// unconverted, permanently unconvertible until one exists.
+			if !cueRefs[strings.ToLower(base)] {
+				report.Add(audit.Warn, audit.CategoryContainers, sys, base,
+					"loose disc image with no matching .cue sheet; chd can't convert it without one", "")
+			}
 			return
 		}
 		report.Add(audit.Warn, audit.CategoryContainers, sys, base, "raw/archived disc image; convert to CHD", "chd")

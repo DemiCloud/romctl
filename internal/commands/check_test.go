@@ -323,6 +323,53 @@ func TestCheckM3uDirRecognizesNestedToDelete(t *testing.T) {
 	}
 }
 
+// TestCheckFlagsBinWithNoMatchingCueSheet guards a real gap found
+// against a real library: a loose .bin with no .cue sheet at all can
+// never be converted by chd (chdman always needs a cue to know the
+// track layout), but used to pass check silently - exactly the shape
+// of an old "data track only" rip or an incomplete transfer.
+func TestCheckFlagsBinWithNoMatchingCueSheet(t *testing.T) {
+	lib := scratchLibrary(t)
+	if err := os.WriteFile(filepath.Join(lib.Roms, "psx", "Lone Game (USA).bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if !strings.Contains(out, "Lone Game (USA).bin") || !strings.Contains(out, "no matching .cue sheet") {
+		t.Errorf("expected the cue-less bin to be flagged, got:\n%s", out)
+	}
+}
+
+// TestCheckDoesNotFlagBinReferencedByCueWithDifferentName guards against
+// a false positive: a cue sheet doesn't have to share its bin's exact
+// filename stem (chdman resolves a cue's FILE directive by the name
+// written inside it) - a multi-track dump's own bin files are routinely
+// named "Title (Track N).bin" while the cue itself is just "Title.cue".
+func TestCheckDoesNotFlagBinReferencedByCueWithDifferentName(t *testing.T) {
+	lib := scratchLibrary(t)
+	psxDir := filepath.Join(lib.Roms, "psx")
+	if err := os.WriteFile(filepath.Join(psxDir, "Multi Track Game (Track 1).bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(psxDir, "Multi Track Game (Track 2).bin"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cue := "FILE \"Multi Track Game (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n" +
+		"FILE \"Multi Track Game (Track 2).bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n"
+	if err := os.WriteFile(filepath.Join(psxDir, "Multi Track Game.cue"), []byte(cue), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		Check(lib, []string{"psx"}, actions.SchemeNoTag, true, cliutil.FormatPlain, "")
+	})
+	if strings.Contains(out, "no matching .cue sheet") {
+		t.Errorf("both tracks are referenced by the cue sheet, should not be flagged, got:\n%s", out)
+	}
+}
+
 func TestCheckFlagsMisfiledCartridgeROM(t *testing.T) {
 	lib := scratchLibrary(t)
 	segaDir := filepath.Join(lib.Roms, "segacd")
