@@ -164,13 +164,33 @@ type cullFlag struct {
 //     that up isn't attempted here - it's reported instead, for manual
 //     handling.
 //
-//   - An unmanaged format (discClassKnownExts) - a file extension
-//     romctl doesn't recognize at all for a disc-based system (.PBP in
-//     a psx/ directory is the real case this was written for) - is only
-//     ever reported, never retired: romctl has no way to confirm it's
-//     actually broken, and plenty of such formats play just fine as-is
-//     in the right emulator core without ever being converted. Deciding
-//     what to do with these is left to you.
+//   - An unmanaged format (knownExtsFor) - a file extension outside
+//     what this specific system actually supports. Preferably sourced
+//     from the system's own roms/<sys>/systeminfo.txt (RetroDECK/ES-DE's
+//     own generated metadata - its "Supported file extensions:" line
+//     reflects whatever core is actually configured, confirmed against
+//     a real one: psx's default core there is swanstation, not the
+//     Duckstation standalone guide this was originally written against -
+//     see systemInfoKnownExts), falling back to knownFormatsPerSystem/
+//     classKnownExts only when no systeminfo.txt is present to read.
+//     Covers every class, not just disc-based ones: a stray
+//     ES-DE-internal `gamelist.xml` or emulator `.cfg`/`.log` file
+//     sitting directly in a cartridge system's directory is just as
+//     real a case as a disc-based system's unsupported format, and
+//     systeminfo.txt's own list rules those out exactly the same way.
+//     Only ever reported, never retired: romctl has no way to confirm
+//     it's actually broken.
+//
+//   - A text-like file misusing a format that IS otherwise known/
+//     supported (textLikeFile) - the one case extension matching alone
+//     can never catch: Sega Genesis's own ".md" ROM extension is
+//     identical to Markdown's, and no extension list, however accurate,
+//     could tell them apart. Content is sniffed instead - a control
+//     byte anywhere in the first 512 bytes means binary, no control
+//     bytes at all means text (the same test git/grep -I use to tell
+//     a text file from a binary one; cheap, this never fires on a file
+//     already flagged as unmanaged above). Also only ever reported,
+//     never retired.
 //
 // Reuses checkStructure/checkContainers directly (via the new
 // audit.Report.Findings) rather than a second implementation of "what
@@ -222,7 +242,7 @@ func Cull(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 	}
 
 	for _, sys := range systems {
-		flagged = append(flagged, unmanagedFormatsFor(lib, sys)...)
+		flagged = append(flagged, suspiciousFilesFor(lib, sys)...)
 	}
 
 	if runner.Format.Structured() {
@@ -248,18 +268,91 @@ func Cull(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 	return failed == 0, nil
 }
 
-// unmanagedFormatsFor scans sys's top-level files (bare files only - a
-// Title.m3u/ or Title.ps3/ directory is its own, already-understood
-// convention, not an unrecognized format) for an extension
-// discClassKnownExts doesn't list for sys's class.
-func unmanagedFormatsFor(lib *library.Library, sys string) []cullFlag {
-	known, ok := knownFormatsPerSystem[sys]
-	if !ok {
-		known, ok = classKnownExts[systemdb.ClassOf(sys)]
-		if !ok {
-			return nil
-		}
+// systemInfoExtLabel is the exact label line systemInfoKnownExts looks
+// for in a RetroDECK/ES-DE-generated systeminfo.txt, immediately
+// preceding the actual space-separated extension list on the next
+// non-empty line.
+const systemInfoExtLabel = "Supported file extensions:"
+
+// systemInfoKnownExts parses roms/<sys>/systeminfo.txt's own "Supported
+// file extensions:" line - RetroDECK/ES-DE's own generated per-system
+// metadata, listing exactly what the system's actually-configured
+// emulator core supports - into a lowercased extension set (no leading
+// dot, duplicates from the file's own upper/lowercase pairs collapsed).
+// This is the real, locally-accurate answer suspiciousFilesFor prefers
+// over any hardcoded guess: confirmed against a real one, psx's own
+// systeminfo.txt names swanstation as its default launch core, not
+// Duckstation (the standalone emulator knownFormatsPerSystem's own psx
+// entry was verified against) - two different cores can easily disagree
+// on what they support, and systeminfo.txt reflects whichever one this
+// library's own ES-DE install actually launches. ok is false (caller
+// falls back to knownFormatsPerSystem/classKnownExts) when the file
+// doesn't exist, doesn't parse, or has no such line at all.
+func systemInfoKnownExts(lib *library.Library, sys string) (map[string]bool, bool) {
+	data, err := os.ReadFile(filepath.Join(lib.Roms, sys, "systeminfo.txt"))
+	if err != nil {
+		return nil, false
 	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != systemInfoExtLabel {
+			continue
+		}
+		for _, l := range lines[i+1:] {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
+			}
+			fields := strings.Fields(l)
+			exts := make(map[string]bool, len(fields))
+			for _, f := range fields {
+				exts[strings.ToLower(strings.TrimPrefix(f, "."))] = true
+			}
+			return exts, len(exts) > 0
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// knownExtsFor returns sys's known/supported extension set, preferring
+// its own systeminfo.txt (the real, locally-accurate answer - see
+// systemInfoKnownExts) over the hardcoded knownFormatsPerSystem, falling
+// back to the even broader classKnownExts guess when neither of those
+// has an entry either. ok is false only when nothing at all is
+// available - suspiciousFilesFor then skips the extension check
+// entirely and relies on content-sniffing alone.
+func knownExtsFor(lib *library.Library, sys string) (map[string]bool, bool) {
+	if exts, ok := systemInfoKnownExts(lib, sys); ok {
+		return exts, true
+	}
+	if exts, ok := knownFormatsPerSystem[sys]; ok {
+		return exts, true
+	}
+	if exts, ok := classKnownExts[systemdb.ClassOf(sys)]; ok {
+		return exts, true
+	}
+	return nil, false
+}
+
+// suspiciousFilesFor scans sys's top-level files (bare files only - a
+// Title.m3u/ or Title.ps3/ directory is its own, already-understood
+// convention) for either of two things, never both for the same file:
+//
+//   - An extension knownExtsFor doesn't list for sys at all - flagged
+//     as an unmanaged format immediately, no need to also sniff its
+//     content: a stray ES-DE-internal gamelist.xml or emulator .cfg/
+//     .log file sitting directly in a ROM directory is exactly this
+//     case, caught the same way for any system class, cartridge-shaped
+//     ones included, now that systeminfo.txt gives every system a real
+//     extension list to check against.
+//   - An extension that IS known/supported, but content that looks
+//     like plain text rather than binary ROM data (textLikeFile) - the
+//     one case no extension list, however accurate, could ever catch
+//     on its own: Sega Genesis's own ".md" ROM extension is identical
+//     to Markdown's.
+func suspiciousFilesFor(lib *library.Library, sys string) []cullFlag {
+	known, haveKnown := knownExtsFor(lib, sys)
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)
 	if err != nil {
@@ -275,10 +368,99 @@ func unmanagedFormatsFor(lib *library.Library, sys string) []cullFlag {
 			continue
 		}
 		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(base), "."))
-		if ext == "" || nonROMExts[ext] || known[ext] {
+		if nonROMExts[ext] {
 			continue
 		}
-		flags = append(flags, cullFlag{sys, base, "unrecognized format for this system; romctl has never checked it - verify manually it still plays"})
+		if haveKnown && !known[ext] {
+			flags = append(flags, cullFlag{sys, base, "unrecognized format for this system; romctl has never checked it - verify manually it still plays"})
+			continue
+		}
+		if textFormatExts[ext] {
+			continue
+		}
+		if reason, ok := textLikeFile(filepath.Join(sysDir, base)); ok {
+			flags = append(flags, cullFlag{sys, base, reason})
+		}
 	}
 	return flags
+}
+
+// textFormatExts is every extension that's expected to be plain text,
+// not binary ROM data, despite showing up in a "supported formats" list
+// for some system - a cue sheet (.cue), a playlist (.m3u), and (per
+// Dolphin's own documented GameCube/Wii support) .json. textLikeFile's
+// own test would correctly, but uselessly, flag every one of these -
+// they're supposed to be text - so suspiciousFilesFor skips the content
+// check for them entirely instead of reporting the obvious.
+var textFormatExts = map[string]bool{
+	"cue": true, "m3u": true, "json": true,
+}
+
+// textSniffWindow is how much of a file textLikeFile samples - comfortably
+// past a real, confirmed case this needed to cover: some mid-90s EA/
+// Tiburon-developed cartridges (NHL 96, Boxing Legends of the Ring,
+// Chavez Boxing 2, ... - all found in one real library) embed a long
+// plain-ASCII "help wanted"/developer-credits message at the very start
+// of the ROM, ahead of any actual binary code - one real example's own
+// text ran to byte 888 before the first control byte appeared. A naive
+// 512-byte sample would misread any of these as a stray text file; at
+// 32 KiB, a legitimate cartridge ROM's own binary code is certain to
+// show up somewhere in the sample no matter how long an embedded text
+// header runs, while a stray non-ROM text file (a README, a config, a
+// genuinely misplaced Markdown document) is essentially never that
+// large to begin with - so there's no real downside to the wider window.
+const textSniffWindow = 32 * 1024
+
+// textLikeFile reports whether path's content looks like plain text
+// rather than binary ROM data, by the same test git/grep -I use to
+// tell the two apart: a control byte anywhere in the sample (something
+// other than tab/LF/CR) means binary, no control byte at all means
+// text. Deliberately not http.DetectContentType - confirmed unsound for
+// this by a real false positive it produced: DetectContentType treats
+// a leading 0xFEFF/0xFFFE byte pair as a UTF-16 BOM and reports text
+// unconditionally without ever looking further, and a real GBA ROM's
+// own header starts with exactly that byte pattern despite being
+// unambiguously binary (confirmed via a hex dump - the same bytes
+// contain plenty of control bytes this function's own test catches
+// correctly). An empty file is deliberately left alone rather than
+// flagged - RetroDECK itself uses empty files as placeholders (the
+// same convention as .directory), so an empty file is routine, not
+// suspicious.
+func textLikeFile(path string) (reason string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	buf := make([]byte, textSniffWindow)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", false
+	}
+	if n == 0 {
+		return "", false
+	}
+	if isLikelyText(buf[:n]) {
+		return "looks like a text file, not binary ROM data - check its extension and content", true
+	}
+	return "", false
+}
+
+// isLikelyText reports whether data contains no byte that couldn't
+// plausibly appear in a text file: a control character other than
+// tab/LF/CR anywhere in the sample disqualifies it. This undersells
+// "text" a little (some legitimate text encodings use other control
+// bytes) in exchange for near-zero false positives on real binary ROM
+// data, which this function's own doc comment explains is the actual
+// risk worth avoiding here.
+func isLikelyText(data []byte) bool {
+	for _, b := range data {
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b == 0x7F {
+			return false
+		}
+	}
+	return true
 }

@@ -234,7 +234,7 @@ falls back to disk when it isn't safe to use.
 | `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `prune` | Remove `gamelist.xml` entries (and their `downloaded_media` files) for ROMs no longer on disk - the cleanup Skyscraper's own gamelist generation never does on its own. See [Scraping](#scraping). |
-| `cull` | Retire confirmed-dead files (corrupt CHD/XISO, a cue-less `.bin`, leftover artifacts) into `_to_delete/`; report, but never touch, a format the target system's real emulator doesn't actually support (per RetroDECK's own docs) or a dead disc already grouped inside a `Title.m3u/` directory. Meant to run after `fix` (and `scrape`, if used). See [Library conventions](#library-conventions). |
+| `cull` | Retire confirmed-dead files (corrupt CHD/XISO, a cue-less `.bin`, leftover artifacts) into `_to_delete/`; report, but never touch, a format the target system doesn't actually support (per its own `systeminfo.txt` or RetroDECK's docs), a file whose content doesn't look like the format it claims to be, or a dead disc already grouped inside a `Title.m3u/` directory. Meant to run after `fix` (and `scrape`, if used). See [Library conventions](#library-conventions). |
 | `clean` | Permanently delete `_to_delete/` directories, including one nested inside a `Title.m3u/` multi-disc directory (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump/FBNeo DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
@@ -635,25 +635,36 @@ confirm. An old-version CHD, a DVD-type CHD sitting in a CD-class system,
 or a PS3 installed/PSN-style folder are all left alone - each might still
 work fine, or has its own existing `check`/`fix` path. An incomplete disc
 set is left alone too: the one disc that *is* present is itself confirmed
-good (see `discs` above). And a format outside what the target system's
-real emulator actually supports is only ever **reported**, never retired -
+good (see `discs` above). And a format outside what the target system
+actually supports, or a file that just doesn't look like the kind of data
+that format should contain, is only ever **reported**, never retired -
 romctl has no way to delete a file it can't be sure is actually broken.
 
-That "what's actually supported" check is sourced from RetroDECK's own
-per-emulator documentation (the `wiki_emulator_guides` pages at
+"What's actually supported" is answered straight from the library itself
+whenever possible: every RetroDECK/ES-DE system directory gets a real,
+generated `systeminfo.txt` with its own "Supported file extensions:"
+line, reflecting whichever emulator core that install is actually
+configured to use - `cull` reads that file first, before falling back to
+anything hardcoded. Only a system with no `systeminfo.txt` present falls
+back further, first to a per-emulator table checked directly against
+RetroDECK's own documentation (the `wiki_emulator_guides` pages at
 [retrodeck.readthedocs.io](https://retrodeck.readthedocs.io/en/latest/wiki_emulator_guides/)),
-not romctl's own guess at what it happens to convert - the two aren't the
-same thing, and relying on the guess produced two confirmed false
-positives against a real library: `.PBP` is directly supported by
-Duckstation (the PS1 emulator RetroDECK documents), and `.cdi` the same
-way by Flycast (Dreamcast) - neither should ever have been flagged, and
-once checked against the real docs, neither is. Systems that run through
-a RetroArch core rather than a standalone emulator (Saturn, Mega CD,
-PC Engine CD, 3DO, Neo Geo CD, and a handful of others) have no dedicated
-RetroDECK guide page to check against yet, so those still fall back to a
-narrower guess pending the same verification - if you're using one of
-those systems and see something unexpectedly flagged (or unexpectedly
-*not* flagged), that's why.
+then to a broader per-class guess for systems with no dedicated guide
+page at all (Saturn, Mega CD, PC Engine CD, 3DO, Neo Geo CD, and a
+handful of others that run through a shared RetroArch core) - if you're
+using one of those and see something unexpectedly flagged (or
+unexpectedly *not* flagged), that's why.
+
+Extension lists alone can't catch everything, though - Sega Genesis's own
+`.md` ROM extension is identical to Markdown's, and no list of supported
+extensions tells a real ROM apart from a stray Markdown file sharing it.
+For files with a recognized extension, `cull` also peeks at the actual
+content: a file that reads as plain text (no sample bytes outside normal
+text) where a binary ROM/disc image is expected gets flagged the same
+way, regardless of extension. Genuinely text-based formats (`.cue`,
+`.m3u`, Dolphin's own `.json`) are exempt, and an empty file is always
+left alone - RetroDECK itself drops those as placeholders (e.g.
+`.directory`).
 
 ```sh
 romctl cull --dry-run  # preview: what would be retired, what would just be flagged

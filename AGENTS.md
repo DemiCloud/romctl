@@ -182,38 +182,64 @@ Key `internal/` packages:
   DVD-type CHD in a CD-class system (misfiled, not necessarily broken -
   already its own plain `check` finding), a PS3 installed/PSN-style
   folder (may run fine as-is), and an incomplete disc set (the present
-  disc is itself confirmed good - see `discs`). Separately,
-  `knownFormatsPerSystem` lists, per romctl system directory name Cull
-  has directly verified against RetroDECK's own per-emulator "what file
-  formats are supported" docs (the 32
-  `wiki_emulator_guides/<emulator>/<emulator>-guide/` pages, confirmed
-  2026-11-11 against the site's own `sitemap.xml`), every extension that
-  system's real emulator actually plays - not romctl's own guess at what
-  it can convert. This replaced an earlier guess derived purely from
-  `checkContainerFile`'s own switch (what romctl itself recognizes, not
-  what the target emulator supports), which produced two confirmed false
-  positives against a real library: Duckstation (psx's documented
-  emulator) lists `.PBP` as directly supported, and Flycast (dreamcast)
-  lists `.cdi` the same way - neither should ever have been flagged as
-  unmanaged at all, and once verified, neither is. `classKnownExts` is
-  the fallback for every disc-based system with no verified entry yet -
-  every other `ClassCD` system (saturn, segacd, pcenginecd, 3do,
+  disc is itself confirmed good - see `discs`). Separately, `knownExtsFor`
+  resolves the known/supported extension set for a system in preference
+  order: first `systemInfoKnownExts` - roms/<sys>/systeminfo.txt, which
+  RetroDECK/ES-DE itself generates per system with a real "Supported
+  file extensions:" line reflecting whatever core is *actually
+  configured*, confirmed against a real one (psx's own default launch
+  core there is swanstation, not the Duckstation standalone guide
+  `knownFormatsPerSystem` was originally verified against - two cores
+  can disagree, and systeminfo.txt reflects whichever one this library's
+  own install actually uses) - then `knownFormatsPerSystem`, verified
+  directly against RetroDECK's own per-emulator "what file formats are
+  supported" docs (the 32 `wiki_emulator_guides/<emulator>/
+  <emulator>-guide/` pages, confirmed 2026-11-11 against the site's own
+  `sitemap.xml`) for a system with no systeminfo.txt present, then
+  `classKnownExts`, a broader per-class guess for everything else
+  (every other `ClassCD` system - saturn, segacd, pcenginecd, 3do,
   neogeocd, pcfx, amigacd32, cdtv, cdimono1, atarijaguarcd, tg-cd, and
-  their regional variants) runs through a RetroArch core rather than a
-  standalone emulator, and RetroDECK's wiki has no dedicated per-core
-  page the way it does for the 32 standalone emulators - so those still
-  use the original guess, pending the same verification. `ps3` is in
-  `classKnownExts` too despite RPCS3 having its own guide page: that
-  page documents ES-DE's own launcher convention (`.desktop` shortcuts,
-  or a folder renamed `.ps3`/`.ps3dir`), not which raw disc formats
-  RPCS3 itself reads, so it isn't the same kind of data the other 31
-  pages give. Cartridge-shaped classes (cart/n64/snes/arcade) have no
-  equivalent closed extension set at all, so they're not covered by
-  either map. A disc already grouped inside a `Title.m3u/`
-  directory is reported the same way even when it matches a
-  cull-worthy message, rather than retired: removing just one disc
-  would leave the playlist referencing a file that's gone, and this
-  doesn't attempt to fix that up.
+  their regional variants - runs through a RetroArch core with no
+  dedicated RetroDECK guide page at all, and ps3 is here too despite
+  RPCS3 having its own guide page, since that page documents ES-DE's
+  own launcher convention - `.desktop` shortcuts, or a folder renamed
+  `.ps3`/`.ps3dir` - not which raw disc formats RPCS3 itself reads, so
+  it isn't the same kind of data the other 31 pages give). Covers every
+  class, cartridge-shaped ones (cart/n64/snes/arcade) included, now that
+  systeminfo.txt gives every system a real extension list to check
+  against - a stray ES-DE-internal `gamelist.xml` or emulator `.cfg`/
+  `.log`/`.exe` file sitting directly in a cartridge system's directory
+  is exactly this case, confirmed against a real library (`gamelist.xml`,
+  `fceux.exe`, `7z.dll`, N64 `.eep`/`.mpk`/`.sra` save files, all
+  correctly flagged this way, none of them wrongly retired). A disc
+  already grouped inside a `Title.m3u/` directory is reported the same
+  way even when it matches a cull-worthy message, rather than retired:
+  removing just one disc would leave the playlist referencing a file
+  that's gone, and this doesn't attempt to fix that up.
+- **Content-sniffing (`textLikeFile`) is the one case no extension list,
+  however accurate, can ever resolve on its own**: Sega Genesis's own
+  `.md` ROM extension is identical to Markdown's, and systeminfo.txt
+  listing `.md` as supported for genesis doesn't help tell a real ROM
+  apart from a stray Markdown file sharing that extension - only content
+  can. The test is the same one git/`grep -I` use: a control byte
+  (anything other than tab/LF/CR) anywhere in the sample means binary,
+  none at all means text. Two real false positives, both confirmed
+  against a real library, shaped this: `http.DetectContentType` (the
+  obvious stdlib choice, tried first) treats a leading `0xFEFF`/`0xFFFE`
+  byte pair as an unconditional UTF-16 BOM and reports text without
+  looking further, which a real GBA ROM's own header byte-for-byte
+  matches despite being unambiguously binary - replaced with the
+  control-byte test instead. Even that test needed a wide sample window
+  (`textSniffWindow`, 32 KiB, not a naive 512 bytes): some mid-90s EA/
+  Tiburon cartridges (NHL 96, Boxing Legends of the Ring, Chavez Boxing
+  2, all found in the same real library) embed a long plain-ASCII
+  developer-credits message at the very start of the ROM, ahead of any
+  binary code - one real example's own text ran to byte 888 before the
+  first control byte appeared. `.cue`/`.m3u`/Dolphin's own `.json` are
+  explicitly skipped (`textFormatExts`): they're *supposed* to be text,
+  and flagging them would be correct but useless noise. Never retired,
+  same as an unmanaged format - telling "stray non-ROM file" apart from
+  "ROM romctl doesn't recognize the shape of" isn't attempted here.
 - **`check`'s Fixes table names whether romctl can actually fix a given
   issue itself.** The `Auto-Fix` column is `yes` only for a row backed by
   a real romctl command (`knownFixes`, e.g. `m3u`/`chd`/`rename`); every
