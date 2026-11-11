@@ -26,9 +26,9 @@ func TestScrapRetiresLeftoverExtractionDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if exists(leftover) {
 		t.Error("leftover extraction dir should have been retired")
@@ -45,9 +45,9 @@ func TestScrapRetiresIncompleteTransferLeftover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if exists(leftover) {
 		t.Error("incomplete-transfer leftover should have been retired")
@@ -61,9 +61,9 @@ func TestScrapRetiresCueLessBin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if exists(bin) {
 		t.Error("cue-less bin should have been retired")
@@ -80,9 +80,9 @@ func TestScrapRetiresCorruptCHD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if exists(chd) {
 		t.Error("corrupt CHD should have been retired")
@@ -92,7 +92,7 @@ func TestScrapRetiresCorruptCHD(t *testing.T) {
 // TestScrapLeavesPairedBinAlone guards against a false positive: a .bin
 // with a real matching .cue (even one referencing it by a different
 // filename, same as check's own loadCueReferences) must never be
-// retired - it's chd's job to convert it, not scrap's to discard it.
+// retired - it's chd's job to convert it, not cull's to discard it.
 func TestScrapLeavesPairedBinAlone(t *testing.T) {
 	lib := scrapLibrary(t, "psx")
 	psxDir := filepath.Join(lib.Roms, "psx")
@@ -105,9 +105,9 @@ func TestScrapLeavesPairedBinAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if !exists(bin) {
 		t.Error("a bin paired with a real cue sheet should never be retired")
@@ -121,9 +121,9 @@ func TestScrapDryRunLeavesEverythingInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := Scrap(lib, &actions.Runner{DryRun: true}, []string{"psx"})
+	ok, err := Cull(lib, &actions.Runner{DryRun: true}, []string{"psx"})
 	if err != nil || !ok {
-		t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 	}
 	if !exists(bin) {
 		t.Error("--dry-run should never actually retire anything")
@@ -132,7 +132,7 @@ func TestScrapDryRunLeavesEverythingInPlace(t *testing.T) {
 
 // TestScrapFlagsRatherThanRetiresNestedM3UDisc guards a deliberate
 // scope limit: a disc already grouped inside a Title.m3u/ directory is
-// never auto-retired even when it matches a scrap-worthy finding,
+// never auto-retired even when it matches a cull-worthy finding,
 // since removing just one disc would leave the playlist referencing a
 // file that's gone - reported for manual review instead.
 func TestScrapFlagsRatherThanRetiresNestedM3UDisc(t *testing.T) {
@@ -155,9 +155,9 @@ func TestScrapFlagsRatherThanRetiresNestedM3UDisc(t *testing.T) {
 
 	runner := &actions.Runner{Verbose: true}
 	out := captureStdout(t, func() {
-		ok, err := Scrap(lib, runner, []string{"psx"})
+		ok, err := Cull(lib, runner, []string{"psx"})
 		if err != nil || !ok {
-			t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+			t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 		}
 	})
 	if !exists(disc1) || !exists(disc2) {
@@ -176,9 +176,9 @@ func TestScrapFlagsUnmanagedFormatForDiscBasedSystem(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		ok, err := Scrap(lib, &actions.Runner{}, []string{"psx"})
+		ok, err := Cull(lib, &actions.Runner{}, []string{"psx"})
 		if err != nil || !ok {
-			t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+			t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 		}
 	})
 	if !exists(pbp) {
@@ -197,9 +197,9 @@ func TestScrapDoesNotFlagCartridgeExtensionsAsUnmanaged(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		ok, err := Scrap(lib, &actions.Runner{}, []string{"snes"})
+		ok, err := Cull(lib, &actions.Runner{}, []string{"snes"})
 		if err != nil || !ok {
-			t.Fatalf("Scrap() = (%v, %v), want (true, nil)", ok, err)
+			t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 		}
 	})
 	if strings.Contains(out, "Flagged") {

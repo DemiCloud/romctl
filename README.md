@@ -234,7 +234,7 @@ falls back to disk when it isn't safe to use.
 | `relocate` | Move a cartridge/handheld ROM out of the wrong system's directory (identified by its own header, not its extension) into the correct one. See [Misfiled ROMs](#misfiled-roms). |
 | `scrape` | Fetch game metadata/media via Skyscraper (needs `[scrape] user` in the config file). See [Scraping](#scraping). |
 | `prune` | Remove `gamelist.xml` entries (and their `downloaded_media` files) for ROMs no longer on disk - the cleanup Skyscraper's own gamelist generation never does on its own. See [Scraping](#scraping). |
-| `scrap` | Retire confirmed-dead files (corrupt CHD/XISO, a cue-less `.bin`, leftover artifacts) into `_to_delete/`; report, but never touch, a format romctl doesn't recognize at all (`.PBP`, `.cdi`, ...) or a dead disc already grouped inside a `Title.m3u/` directory. Meant to run after `fix` (and `scrape`, if used). See [Library conventions](#library-conventions). |
+| `cull` | Retire confirmed-dead files (corrupt CHD/XISO, a cue-less `.bin`, leftover artifacts) into `_to_delete/`; report, but never touch, a format romctl doesn't recognize at all (`.PBP`, `.cdi`, ...) or a dead disc already grouped inside a `Title.m3u/` directory. Meant to run after `fix` (and `scrape`, if used). See [Library conventions](#library-conventions). |
 | `clean` | Permanently delete `_to_delete/` directories, including one nested inside a `Title.m3u/` multi-disc directory (asks for confirmation once, for everything it's about to delete). |
 | `sync` | Mirror `roms/`/`bios/`/`media` to the device, or `--pull` to reverse direction. See [Syncing to a device](#syncing-to-a-device). |
 | `tools` | Report whether `chdman`/`dolphin-tool`/`extract-xiso`/`skyscraper` are embedded in *this* binary, found on `PATH`, or neither (see [Requirements](#requirements)), plus which systems have a No-Intro/Redump/FBNeo DAT snapshot embedded and its version/date (see [Collection](#collection-havemissing-against-a-dat)). |
@@ -621,7 +621,7 @@ matching by filename.
 ### Scrapping dead files
 
 Once `fix` (and `scrape`, if you use it) have had their chance to convert
-and organize everything they can, `romctl scrap` looks for whatever's left
+and organize everything they can, `romctl cull` looks for whatever's left
 that's a genuine dead end - not just unconverted, but something `check`
 has already positively confirmed is broken or permanently stuck: a corrupt
 `.chd`/`.xiso`, a truncated PS3 ISO, a PS3 dump missing its `EBOOT.BIN`, a
@@ -630,7 +630,7 @@ leftover extraction/incomplete-transfer artifact, or a cue-less `.bin`
 `actions.Retire` touches - nothing here deletes outright; run `clean`
 afterward to actually remove them.
 
-`scrap` is deliberately conservative about anything it can't positively
+`cull` is deliberately conservative about anything it can't positively
 confirm. An old-version CHD, a DVD-type CHD sitting in a CD-class system,
 or a PS3 installed/PSN-style folder are all left alone - each might still
 work fine, or has its own existing `check`/`fix` path. An incomplete disc
@@ -644,9 +644,9 @@ in the right emulator core without ever being converted. Deciding what to
 do with those is on you.
 
 ```sh
-romctl scrap --dry-run  # preview: what would be retired, what would just be flagged
-romctl scrap             # retire confirmed-dead files; print anything else for review
-romctl clean             # actually remove what scrap (or anything else) retired
+romctl cull --dry-run  # preview: what would be retired, what would just be flagged
+romctl cull             # retire confirmed-dead files; print anything else for review
+romctl clean             # actually remove what cull (or anything else) retired
 ```
 
 ### Naming

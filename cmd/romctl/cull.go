@@ -7,11 +7,11 @@ import (
 	"github.com/demicloud/romctl/internal/commands"
 )
 
-func newScrapCmd() *cobra.Command {
-	cmd := newMutatingCmd("scrap [SYSTEM...|all]", "retire confirmed-dead files; flag unmanaged formats for review")
+func newCullCmd() *cobra.Command {
+	cmd := newMutatingCmd("cull [SYSTEM...|all]", "retire confirmed-dead files; flag unmanaged formats for review")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runMutating(cmd, args, func(systems []string, runner *actions.Runner) (bool, error) {
-			return commands.Scrap(appCtx.lib, runner, systems)
+			return commands.Cull(appCtx.lib, runner, systems)
 		})
 	}
 	return cmd

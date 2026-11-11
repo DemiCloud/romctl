@@ -202,7 +202,7 @@ func (r *Report) Scan(category Category, n int) {
 }
 
 // Finding is one recorded Add/AddQuiet call, exposed read-only for a
-// caller that needs to react to specific findings itself (commands.Scrap,
+// caller that needs to react to specific findings itself (commands.Cull,
 // deciding what's a confirmed dead end worth retiring) rather than just
 // display them the way Table/Fixes/Encode do - reusing check's own
 // structure/containers detection logic (what counts as corrupt, a

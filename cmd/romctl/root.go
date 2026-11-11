@@ -89,7 +89,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newFixCmd())
 	root.AddCommand(newRenameCmd(), newUnpackCmd(), newCHDCmd(), newM3UCmd(),
 		newN64Cmd(), newSNESCmd(), newXisoCmd(), newRVZCmd(), newPS3Cmd(), newSavesCmd(), newRelocateCmd())
-	root.AddCommand(newScrapeCmd(), newPruneCmd(), newScrapCmd(), newCleanCmd(), newSyncCmd())
+	root.AddCommand(newScrapeCmd(), newPruneCmd(), newCullCmd(), newCleanCmd(), newSyncCmd())
 	return root
 }
 

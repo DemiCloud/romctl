@@ -15,7 +15,7 @@ import (
 	"github.com/demicloud/romctl/internal/systemdb"
 )
 
-// scrapMessages is the exact set of check findings (structure or
+// cullMessages is the exact set of check findings (structure or
 // containers category, matched by message substring) that mean a file
 // is a confirmed dead end - not just unconverted, not just unverified,
 // but something check has positively confirmed is broken or
@@ -27,7 +27,7 @@ import (
 // incomplete disc set (the one disc that IS present is itself
 // confirmed good - see `discs`/`collection --verify-chd`) are all left
 // out on purpose.
-var scrapMessages = []string{
+var cullMessages = []string{
 	"incomplete conversion leftover",
 	"incomplete transfer/conversion leftover",
 	"leftover extraction directory",
@@ -38,8 +38,8 @@ var scrapMessages = []string{
 	"no EBOOT.BIN found",
 }
 
-func scrapWorthy(message string) bool {
-	for _, m := range scrapMessages {
+func cullWorthy(message string) bool {
+	for _, m := range cullMessages {
 		if strings.Contains(message, m) {
 			return true
 		}
@@ -47,7 +47,7 @@ func scrapWorthy(message string) bool {
 	return false
 }
 
-// discClassKnownExts is, for each disc-based system class Scrap's
+// discClassKnownExts is, for each disc-based system class Cull's
 // unmanaged-format sweep covers, the complete set of extensions
 // checkContainerFile already recognizes for it (every key sharing that
 // class in its own switch - see check.go) plus whichever "already
@@ -55,7 +55,7 @@ func scrapWorthy(message string) bool {
 // that reason (Dolphin's own .rvz - unlike .chd, .xiso and PS3's own
 // .iso, there's no checkRVZ validation at all yet, so .rvz never
 // appears as a switch key). Anything else found in one of these
-// classes' directories is a format Scrap has never seen before - not
+// classes' directories is a format Cull has never seen before - not
 // necessarily broken (it might just work as-is, like a .PBP a libretro
 // PS1 core can often load directly without any conversion), but worth
 // surfacing rather than staying silent about. Cartridge-shaped classes
@@ -79,20 +79,20 @@ func extSet(exts ...string) map[string]bool {
 	return m
 }
 
-// scrapFlag is one file Scrap reports but doesn't touch - either an
+// cullFlag is one file Cull reports but doesn't touch - either an
 // unmanaged format, or a confirmed dead end that happens to be sitting
-// inside a Title.m3u/ directory (see Scrap's own doc comment).
-type scrapFlag struct {
+// inside a Title.m3u/ directory (see Cull's own doc comment).
+type cullFlag struct {
 	sys, file, reason string
 }
 
-// Scrap is meant to run after fix (and scrape, if used) have already had
+// Cull is meant to run after fix (and scrape, if used) have already had
 // their chance to convert and organize everything they can: it looks for
 // whatever's left that's a genuine dead end, not just unconverted. Two
-// different things can happen to a file, and Scrap is careful to keep
+// different things can happen to a file, and Cull is careful to keep
 // them apart:
 //
-//   - A confirmed dead end (scrapMessages) - check's own structure/
+//   - A confirmed dead end (cullMessages) - check's own structure/
 //     containers categories already positively verified it's broken or
 //     permanently stuck (a corrupt CHD/XISO/ISO, a loose .bin with no
 //     .cue sheet anywhere, a leftover extraction/incomplete-transfer
@@ -118,15 +118,15 @@ type scrapFlag struct {
 // audit.Report.Findings) rather than a second implementation of "what
 // counts as corrupt/leftover/unconvertible" - the one cost of that reuse
 // is that an ambiguous disc set still gets its real chdman/dolphin-tool
-// confirmation pass (see checkIncompleteDiscSet) even though Scrap never
+// confirmation pass (see checkIncompleteDiscSet) even though Cull never
 // acts on that particular finding; running `check`/`discs` first, as
-// scrap is meant to run after everything else anyway, means that cost
+// cull is meant to run after everything else anyway, means that cost
 // is nothing new by the time you get here.
-func Scrap(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
+func Cull(lib *library.Library, runner *actions.Runner, systems []string) (bool, error) {
 	start := time.Now()
-	log := cliutil.NewLogger("scrap", runner.Format)
+	log := cliutil.NewLogger("cull", runner.Format)
 	var retired, failed int
-	var flagged []scrapFlag
+	var flagged []cullFlag
 
 	report := audit.New(io.Discard, false, cliutil.FormatPlain, "")
 	jobs := &discJobCollector{}
@@ -142,13 +142,13 @@ func Scrap(lib *library.Library, runner *actions.Runner, systems []string) (bool
 		if f.Category != audit.CategoryStructure && f.Category != audit.CategoryContainers {
 			continue
 		}
-		if !scrapWorthy(f.Message) {
+		if !cullWorthy(f.Message) {
 			continue
 		}
 		if strings.ContainsAny(f.Path, `/\`) {
-			// Nested inside a Title.m3u/ directory - see Scrap's own doc
+			// Nested inside a Title.m3u/ directory - see Cull's own doc
 			// comment on why this isn't auto-retired.
-			flagged = append(flagged, scrapFlag{f.System, f.Path, f.Message})
+			flagged = append(flagged, cullFlag{f.System, f.Path, f.Message})
 			continue
 		}
 		path := filepath.Join(lib.Roms, f.System, f.Path)
@@ -174,7 +174,7 @@ func Scrap(lib *library.Library, runner *actions.Runner, systems []string) (bool
 		return failed == 0, nil
 	}
 	color, reset := cliutil.StatusColor(runner.Format, failed > 0)
-	line := fmt.Sprintf("%sscrap: %d retired, %d flagged for review, %d failed in %s%s\n",
+	line := fmt.Sprintf("%scull: %d retired, %d flagged for review, %d failed in %s%s\n",
 		color, retired, len(flagged), failed, time.Since(start).Round(time.Second), reset)
 	if runner.Quiet {
 		runner.Summarize(line)
@@ -194,7 +194,7 @@ func Scrap(lib *library.Library, runner *actions.Runner, systems []string) (bool
 // Title.m3u/ or Title.ps3/ directory is its own, already-understood
 // convention, not an unrecognized format) for an extension
 // discClassKnownExts doesn't list for sys's class.
-func unmanagedFormatsFor(lib *library.Library, sys string) []scrapFlag {
+func unmanagedFormatsFor(lib *library.Library, sys string) []cullFlag {
 	class := systemdb.ClassOf(sys)
 	known, ok := discClassKnownExts[class]
 	if !ok {
@@ -205,7 +205,7 @@ func unmanagedFormatsFor(lib *library.Library, sys string) []scrapFlag {
 	if err != nil {
 		return nil
 	}
-	var flags []scrapFlag
+	var flags []cullFlag
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -218,7 +218,7 @@ func unmanagedFormatsFor(lib *library.Library, sys string) []scrapFlag {
 		if ext == "" || nonROMExts[ext] || known[ext] {
 			continue
 		}
-		flags = append(flags, scrapFlag{sys, base, "unrecognized format for this system; romctl has never checked it - verify manually it still plays"})
+		flags = append(flags, cullFlag{sys, base, "unrecognized format for this system; romctl has never checked it - verify manually it still plays"})
 	}
 	return flags
 }
