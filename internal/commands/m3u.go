@@ -25,7 +25,10 @@ import (
 var discFileRE = regexp.MustCompile(`^(.+) \(Disc (\d+)\)\.(chd|rvz)$`)
 
 // M3U groups loose "Title (Disc N).chd"/"Title (Disc N).rvz" files into a
-// Title.m3u/ directory with a playlist, for every system given.
+// Title.m3u/ directory with a playlist, for every system given. A title
+// with only one such file - no sibling disc number present - is left
+// alone rather than wrapped in a pointless one-file .m3u/ directory: see
+// the loop's own comment for why.
 func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 	start := time.Now()
 	log := cliutil.NewLogger("m3u", runner.Format)
@@ -59,13 +62,25 @@ func M3U(lib *library.Library, runner *actions.Runner, systems []string) error {
 		sort.Strings(titles)
 
 		for _, title := range titles {
+			discs := byTitle[title]
+			if len(discs) < 2 {
+				// A lone "(Disc N)" file with no sibling disc number is
+				// just as likely to be a single-disc game whose name
+				// happens to carry a disc tag as it is to be genuinely
+				// missing the rest of a set (see check's own
+				// "incomplete disc set" finding, which tells the two
+				// apart where it can) - grouping it alone into a
+				// one-file .m3u/ directory would be pure clutter either
+				// way, so it's left loose instead.
+				continue
+			}
+
 			dir := filepath.Join(sysDir, title+".m3u")
 			if exists(dir) {
 				log.Errf("exists, skipped: %s/%s.m3u", sys, title)
 				continue
 			}
 
-			discs := byTitle[title]
 			sort.Slice(discs, func(i, j int) bool { return discs[i].num < discs[j].num })
 
 			if !runner.Act("group %s/%s (Disc N).%s -> %s.m3u/", sys, title, discs[0].ext, title) {

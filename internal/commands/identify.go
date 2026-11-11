@@ -35,15 +35,17 @@ type identifyRow struct {
 // or anything else (see rename --verify-dat for actually renaming a
 // confirmed match within a library).
 //
-// A .chd is extracted automatically - chd.Classify reads the file's own
-// header/metadata to pick the right chdman command (see
-// hashDiscCHDByClassify), so no --verify-chd flag or --system hint is
-// needed; this command only ever handles a handful of files at a time,
-// not a whole library, so the extraction cost that makes --verify-chd
-// opt-in everywhere else isn't a concern here. Every track's hash goes
-// into the same match attempt, so a multi-track CD game is only
-// confirmed once every track is accounted for, same as collection's own
-// --verify-chd path.
+// A .chd or .rvz is extracted automatically - chd.Classify reads a CHD's
+// own header/metadata to pick the right chdman command (see
+// hashDiscCHDByClassify); an .rvz always goes through dolphin-tool
+// (hashDiscRVZ) instead, GameCube/Wii having no CD/DVD-shape ambiguity
+// to classify in the first place. Either way, no --verify-chd flag or
+// --system hint is needed; this command only ever handles a handful of
+// files at a time, not a whole library, so the extraction cost that
+// makes --verify-chd opt-in everywhere else isn't a concern here. Every
+// track's hash goes into the same match attempt, so a multi-track CD
+// game is only confirmed once every track is accounted for, same as
+// collection's own --verify-chd path.
 func Identify(paths []string, datDir string, format cliutil.Format) (bool, error) {
 	type loadedSource struct {
 		src systemdb.DatSource
@@ -56,7 +58,7 @@ func Identify(paths []string, datDir string, format cliutil.Format) (bool, error
 		}
 	}
 
-	var chdmanPath string
+	var chdmanPath, dolphinToolPath string
 	ok := true
 	var rows []identifyRow
 	for _, path := range paths {
@@ -74,7 +76,8 @@ func Identify(paths []string, datDir string, format cliutil.Format) (bool, error
 
 		var hashes []discTrackHash
 		size := info.Size()
-		if strings.ToLower(filepath.Ext(path)) == ".chd" {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".chd":
 			if chdmanPath == "" {
 				chdmanPath, err = tools.Resolve("chdman")
 				if err != nil {
@@ -87,7 +90,17 @@ func Identify(paths []string, datDir string, format cliutil.Format) (bool, error
 					size = logical
 				}
 			}
-		} else {
+		case ".rvz":
+			if dolphinToolPath == "" {
+				dolphinToolPath, err = tools.Resolve("dolphin-tool")
+				if err != nil {
+					return false, err
+				}
+			}
+			var h discTrackHash
+			h, err = hashDiscRVZ(dolphinToolPath, path)
+			hashes = []discTrackHash{h}
+		default:
 			var crc, md5sum, sha1sum string
 			crc, md5sum, sha1sum, err = hashROM(path)
 			hashes = []discTrackHash{{crc, md5sum, sha1sum}}

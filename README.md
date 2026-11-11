@@ -393,26 +393,41 @@ CRC32/MD5/SHA1, matched whichever way the DAT entry itself provides -
 including inside a `.zip`/`.7z`/`.rar`, hashed without extracting to disk.
 A `have` row's `Hash` column is the CRC32(s) that actually confirmed it -
 the same value(s) `identify` would show for the same file(s).
-`.chd` files report as `unverifiable` by default, not matched or missing:
-no CHD metadata stores a hash that lines up with a Redump DAT entry
-(`chdman verify` only checks a CHD against itself). Pass `--verify-chd`
-for a real verdict instead: it extracts the `.chd` (`chdman extractcd`/
-`extractdvd`) into scratch space and hashes the result - per-track for a
-multi-track CD, parsed from chdman's own generated cue sheet - at a real
-cost, roughly what a full `verify` pass already costs, and it's a new
-dependency on `chdman` that `collection` otherwise doesn't need at all.
-A Redump DAT's own `.cue` entry (commonly hashed alongside the binary
-tracks) is ignored on this path: chdman's regenerated cue sheet can never
-byte-match Redump's distributed one, even with perfectly correct track
-data, so a game counts as matched once every actual track is found.
-Cartridge systems are unaffected either way - they're never
-CHD-converted, so they always get a real have/missing verdict regardless
-of this flag. GD-ROM (Dreamcast) CHDs stay `unverifiable` even with
-`--verify-chd`: chdman forces `--splitbin` (one bin file per track) for
-this disc type, and reproducing Redump's own split-track layout from
-that output isn't just a flag away - real-world reports describe needing
-a separate reconstruction pass this package doesn't implement. Every
-other CD/DVD/UMD-class system is unaffected.
+`.chd` files, and `.rvz` (GameCube/Wii) files, report as `unverifiable` by
+default, not matched or missing: neither format's metadata stores a hash
+that lines up with a Redump DAT entry (`chdman verify` only checks a CHD
+against itself; a compressed `.rvz`'s raw bytes never equal the DAT's
+raw-ISO hash). Pass `--verify-chd` for a real verdict instead, for either
+format: it extracts the `.chd` (`chdman extractcd`/`extractdvd`) or `.rvz`
+(`dolphin-tool convert -f iso`) into scratch space and hashes the result -
+per-track for a multi-track CD, parsed from chdman's own generated cue
+sheet, the whole file for everything else (including a GameCube/Wii
+image, even one sourced from an NKit-shrunk dump - dolphin-tool's own
+junk-data regeneration reproduces the byte-exact original either way) -
+at a real cost, roughly what a full `verify` pass already costs for CHD,
+and it's a new dependency on `chdman`/`dolphin-tool` that `collection`
+otherwise doesn't need at all. A Redump DAT's own `.cue` entry (commonly
+hashed alongside the binary tracks) is ignored on the CHD path: chdman's
+regenerated cue sheet can never byte-match Redump's distributed one, even
+with perfectly correct track data, so a game counts as matched once every
+actual track is found. Cartridge systems are unaffected either way -
+they're never CHD/RVZ-converted, so they always get a real have/missing
+verdict regardless of this flag. GD-ROM (Dreamcast) CHDs stay
+`unverifiable` even with `--verify-chd`: chdman forces `--splitbin` (one
+bin file per track) for this disc type, and reproducing Redump's own
+split-track layout from that output isn't just a flag away - real-world
+reports describe needing a separate reconstruction pass this package
+doesn't implement. Every other CD/DVD/UMD-class system is unaffected.
+
+Since Redump gives a multi-disc game's own discs separate entries (one
+row per disc, not one entry with several ROMs), `--verify-chd` together
+with `--missing` surfaces an incomplete multi-disc set for free, with no
+extra flag or status needed: if disc 1 of a two-disc game hashes correctly
+but disc 2 is nowhere in the library, disc 1's row reads `have` and disc
+2's reads `missing` - including for a disc that's sitting inside a
+`Title.m3u/` directory with no sibling at all, which `check`/`discs`
+can't see into (see [Library conventions](#library-conventions)) without
+the extraction `--verify-chd` already pays for.
 
 For `fbneo`, a clone set's zip routinely omits ROMs that are shared with
 its parent set (most FBNeo games declare a parent this way). `collection`
@@ -581,7 +596,17 @@ one, it's reported as an **incomplete disc set** (acquire the rest, or delete
 what you have) instead of the usual "belongs in a `.m3u` directory" `fix: m3u`
 suggestion, which wouldn't actually fix anything here. `romctl discs` lists
 every confirmed-incomplete set directly, without re-running `check`'s other
-categories just to find these lines.
+categories just to find these lines. `m3u` itself follows the same rule in
+reverse: it never groups a lone disc with no sibling into a one-file
+`Title.m3u/` directory, since that's equally likely to be a single-disc
+game as a genuinely incomplete one, and either way it would make the file
+invisible to the checks above - neither `check` nor `discs` looks inside
+an already-grouped `Title.m3u/` directory at all. For a title that's
+*already* grouped with only one disc present (from before this fix, or
+any other way it happened), [`collection --verify-chd`](#collection-havemissing-against-a-dat)
+is the way to actually confirm it: it extracts CHD/RVZ content for real,
+and with `--missing` added, an incomplete set shows up there as one
+disc `have` and the other `missing` - no separate flag or status needed.
 
 ### Naming
 

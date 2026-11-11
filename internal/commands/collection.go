@@ -74,19 +74,35 @@ type collectionRow struct {
 // its own one-line note the same way, so asking for "all" still reports
 // every system that does have coverage.
 //
-// CHD-converted files report as "unverifiable" by default: no CHD
-// metadata stores a hash that lines up with a Redump DAT entry (chdman
-// verify only checks a CHD against itself). Pass verifyCHD (--verify-chd)
-// to get a real verdict instead, at real cost: it extracts every .chd on
-// a CD/DVD/UMD-class system via chdman (hashDiscCHD) and hashes the
-// result - roughly what a full `verify` pass already costs, plus it's a
-// new runtime dependency on chdman neither Collection nor Identify
-// otherwise has. A Redump DAT's own .cue/.ccd/.sub/.toc sidecar entries
-// are ignored for this path (see stripSidecarROMs): chdman's regenerated
-// cue sheet can't byte-match Redump's distributed one even with perfect
-// track data, so a Game counts as matched once every actual binary track
-// is found. This only ever affects disc-based (Redump) systems;
-// cartridge systems (No-Intro) are never CHD-converted, so they always
+// CHD-converted files, and RVZ-converted GameCube/Wii files, report as
+// "unverifiable" by default: neither format's own metadata stores a hash
+// that lines up with a Redump DAT entry (chdman verify only checks a CHD
+// against itself; a compressed .rvz's raw bytes never equal the DAT's
+// raw-ISO hash no matter what - hashing it directly, with no extraction
+// at all, used to silently report every RVZ-converted game as outright
+// "missing" instead, a real bug fixed alongside this doc comment: a
+// format a caller doesn't know how to verify must say so, never guess).
+// Pass verifyCHD (--verify-chd) to get a real verdict for either format
+// instead, at real cost: it extracts every .chd on a CD/DVD/UMD-class
+// system via chdman (hashDiscCHD), and every .rvz on a GameCube/Wii
+// system via dolphin-tool (hashDiscRVZ, confirmed byte-exact even from
+// an NKit-shrunk source - see its own doc comment), then hashes the
+// result - roughly what a full `verify` pass already costs for CHD, plus
+// it's a new runtime dependency on chdman/dolphin-tool neither Collection
+// nor Identify otherwise has. A Redump DAT's own .cue/.ccd/.sub/.toc
+// sidecar entries are ignored for the CHD path (see stripSidecarROMs):
+// chdman's regenerated cue sheet can't byte-match Redump's distributed
+// one even with perfect track data, so a Game counts as matched once
+// every actual binary track is found (RVZ has no sidecar-file equivalent
+// to strip at all). Since Redump gives a multi-disc game's own discs
+// separate Game entries (one row each, not one Game with several ROMs),
+// an incomplete disc set - one disc present and hash-confirmed, another
+// genuinely missing - surfaces for free through this same per-Game
+// have/missing reporting with --verify-chd and --missing both on, no
+// separate "incomplete" status needed: the present disc's own row reads
+// have, the missing one's reads missing. This only ever affects
+// disc-based (Redump) systems; cartridge systems (No-Intro) are never
+// CHD/RVZ-converted, so they always
 // get a real have/missing verdict regardless of this flag. An archived
 // (.zip/.7z/.rar) ROM is hashed by streaming straight through the archive
 // reader (its sole entry - a multi-file archive is skipped, same as
@@ -112,10 +128,13 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 	esdeNames, _ := lib.ESDESystems()
 	failed := false
 
-	var chdmanPath string
+	var chdmanPath, dolphinToolPath string
 	if verifyCHD {
 		var err error
 		if chdmanPath, err = resolveCHDManIfNeeded(systems); err != nil {
+			return false, err
+		}
+		if dolphinToolPath, err = resolveDolphinToolIfNeeded(systems); err != nil {
 			return false, err
 		}
 	}
@@ -199,6 +218,23 @@ func Collection(lib *library.Library, systems []string, datDir string, verifyCHD
 								byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = gf.label, gf.label, gf.label
 								nameToCRC[gf.label] = h.crc
 							}
+							mu.Unlock()
+							return true
+						}
+						fmt.Fprintf(os.Stderr, "collection: %s/%s: extraction failed, reporting unverifiable: %v\n", job.sys, gf.label, err)
+					}
+					mu.Lock()
+					unverifiable = append(unverifiable, gf.label)
+					mu.Unlock()
+					return true
+				}
+				if strings.ToLower(filepath.Ext(gf.label)) == ".rvz" {
+					if verifyCHD && class == systemdb.ClassDolphin {
+						h, err := hashDiscRVZ(dolphinToolPath, gf.path)
+						if err == nil {
+							mu.Lock()
+							byCRC[h.crc], byMD5[h.md5sum], bySHA1[h.sha1sum] = gf.label, gf.label, gf.label
+							nameToCRC[gf.label] = h.crc
 							mu.Unlock()
 							return true
 						}
