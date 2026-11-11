@@ -165,6 +165,38 @@ Key `internal/` packages:
   real multi-track dump routinely names its bin files
   `"Title (Track N).bin"` while the cue itself is just `"Title.cue"` -
   stem-matching alone would falsely flag that legitimate pairing.
+- **`scrap` is the explicit "what's actually dead vs. what we just can't
+  check" sweep, meant to run after `fix` (and `scrape`, if used) have
+  already had their chance.** It keeps two things carefully apart,
+  never conflating "confirmed broken" with "romctl doesn't understand
+  this." `commands.scrapMessages` is the narrow, curated set of check
+  findings (structure/containers, read back via the new
+  `audit.Report.Findings()` rather than a second implementation of the
+  same judgment calls) that mean a file is positively confirmed dead - a
+  corrupt CHD/XISO, a truncated PS3 ISO, a PS3 dump with no EBOOT.BIN, a
+  leftover extraction/incomplete-transfer artifact, a loose `.bin` with
+  no `.cue` anywhere. Those get `actions.Retire`d, same `_to_delete/`
+  convention every other mutating command uses - never deleted outright,
+  `clean` still owns that. Deliberately excluded even though check also
+  flags them: an old-version CHD (works fine, just outdated), a
+  DVD-type CHD in a CD-class system (misfiled, not necessarily broken -
+  already its own plain `check` finding), a PS3 installed/PSN-style
+  folder (may run fine as-is), and an incomplete disc set (the present
+  disc is itself confirmed good - see `discs`). Separately,
+  `discClassKnownExts` lists, per disc-based class (cd/dvd/umd/dolphin/
+  xbox/ps3 - cartridge-shaped classes have no equivalent closed
+  extension set, so they're not covered at all), every extension
+  `checkContainerFile` already recognizes; anything else found there -
+  confirmed against a real library: `.PBP` (PS1-on-PSP packaging) under
+  `psx/`, `.cdi` (DiscJuggler) under `dreamcast/` - is only ever
+  *reported*, never retired: romctl has no conversion/recognition path
+  for either, but both routinely play fine as-is in the right emulator
+  core without ever being converted, so there's no evidence they're
+  actually broken. A disc already grouped inside a `Title.m3u/`
+  directory is reported the same way even when it matches a
+  scrap-worthy message, rather than retired: removing just one disc
+  would leave the playlist referencing a file that's gone, and this
+  doesn't attempt to fix that up.
 - **`check`'s Fixes table names whether romctl can actually fix a given
   issue itself.** The `Auto-Fix` column is `yes` only for a row backed by
   a real romctl command (`knownFixes`, e.g. `m3u`/`chd`/`rename`); every

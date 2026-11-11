@@ -201,6 +201,34 @@ func (r *Report) Scan(category Category, n int) {
 	t.scanned += n
 }
 
+// Finding is one recorded Add/AddQuiet call, exposed read-only for a
+// caller that needs to react to specific findings itself (commands.Scrap,
+// deciding what's a confirmed dead end worth retiring) rather than just
+// display them the way Table/Fixes/Encode do - reusing check's own
+// structure/containers detection logic (what counts as corrupt, a
+// leftover artifact, an unconvertible loose disc, ...) instead of a
+// second implementation of the same judgment calls.
+type Finding struct {
+	Level    Level
+	Category Category
+	System   string
+	Path     string
+	Message  string
+	Fix      string
+}
+
+// Findings returns every finding recorded so far (same underlying data
+// Table/Fixes/Encode already read, just not reduced to a display shape).
+func (r *Report) Findings() []Finding {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Finding, len(r.findings))
+	for i, f := range r.findings {
+		out[i] = Finding{Level: f.level, Category: f.category, System: f.system, Path: f.path, Message: f.message, Fix: f.fx}
+	}
+	return out
+}
+
 // commandHint builds "<prog> [-r root] <fix> <system>" for a per-line hint.
 func (r *Report) commandHint(fix, system string) string {
 	parts := []string{cliutil.ProgName()}
