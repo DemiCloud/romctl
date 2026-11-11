@@ -481,12 +481,15 @@ func TestMatchIncompleteDiscSetConfirmsMissingDisc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
-	if !confirmed {
+	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if !status.confirmed {
 		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true (hash should match disc 1)")
 	}
-	if !strings.Contains(msg, "incomplete disc set") || !strings.Contains(msg, "missing 2") {
-		t.Errorf("msg = %q, want it to mention the incomplete set and missing disc 2", msg)
+	if !status.incomplete() || status.totalDiscs != 2 || len(status.missing) != 1 || status.missing[0] != 2 {
+		t.Errorf("status = %+v, want incomplete, totalDiscs 2, missing [2]", status)
+	}
+	if !strings.Contains(status.message(), "incomplete disc set") || !strings.Contains(status.message(), "missing 2") {
+		t.Errorf("message() = %q, want it to mention the incomplete set and missing disc 2", status.message())
 	}
 }
 
@@ -509,12 +512,12 @@ func TestMatchIncompleteDiscSetSingleDiscGameIsClean(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
-	if !confirmed {
+	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if !status.confirmed {
 		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true")
 	}
-	if msg != "" {
-		t.Errorf("msg = %q, want empty - DAT shows this is a single-disc game", msg)
+	if status.incomplete() {
+		t.Errorf("status = %+v, want not incomplete - DAT shows this is a single-disc game", status)
 	}
 }
 
@@ -530,8 +533,8 @@ func TestMatchIncompleteDiscSetUnconfirmedWhenNoHashMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, confirmed := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
-	if confirmed {
+	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	if status.confirmed {
 		t.Error("matchIncompleteDiscSet() confirmed = true, want false - no hash in the DAT matches this file")
 	}
 }

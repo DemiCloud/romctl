@@ -69,6 +69,56 @@ func TestAddUnknownFixTreatedAsNoCommand(t *testing.T) {
 	}
 }
 
+// TestFixesAutoFixColumnReflectsWhetherRomctlCanActuallyFixIt guards the
+// Auto-Fix column: a knownFixes-backed finding (romctl has a real
+// command for it) reports "yes", while a command-less one (missing
+// BIOS/ROM content romctl can never acquire on its own - see AGENTS.md's
+// Scope boundaries) reports "no", regardless of what instructional text
+// its Fix column shows.
+func TestFixesAutoFixColumnReflectsWhetherRomctlCanActuallyFixIt(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.Add(Warn, CategoryContainers, "psx", "C.cue", "raw/archived disc image; convert to CHD", "chd")
+	r.Add(Fail, CategoryBios, "bios", "scph5501.bin", "required BIOS missing", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+
+	if !rowContains(got, "Convert to CHD", "yes") {
+		t.Errorf("expected the command-backed chd row to report Auto-Fix yes, got:\n%s", got)
+	}
+	if !rowContains(got, "Missing BIOS file", "no") {
+		t.Errorf("expected the command-less BIOS row to report Auto-Fix no, got:\n%s", got)
+	}
+}
+
+// TestFixesPointsIncompleteDiscSetAtDiscsCommandScopedToItsSystem guards
+// labelDetailCommands: an "incomplete disc set" finding must point at
+// commands.Discs (fast, focused) rather than the generic, unscoped
+// "check -v" (every category, every system) detailCommand would
+// otherwise fall back to - and name the one affected system rather than
+// "all" when there's only one.
+func TestFixesPointsIncompleteDiscSetAtDiscsCommandScopedToItsSystem(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, false, cliutil.FormatPlain, "")
+	r.Add(Warn, CategoryStructure, "psx", "Game A (Disc 1).bin",
+		"incomplete disc set (Game A): have disc 1 of 2, missing 2", "")
+	r.Add(Warn, CategoryStructure, "psx", "Game B (Disc 1).bin",
+		"incomplete disc set (Game B): have disc 1 of 2, missing 2", "")
+
+	var out bytes.Buffer
+	r.Fixes(&out)
+	got := out.String()
+
+	if !rowContains(got, "Incomplete disc set", "psx") || !strings.Contains(got, "discs psx") {
+		t.Errorf("expected the collapsed row to name psx and point at discs psx, got:\n%s", got)
+	}
+	if strings.Contains(got, "check -v") {
+		t.Errorf("expected discs, not the generic check -v, got:\n%s", got)
+	}
+}
+
 func TestFixesCollapsesCommandBackedFindings(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, false, cliutil.FormatPlain, "")

@@ -349,14 +349,50 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 		return
 	}
 	num, _ := strconv.Atoi(m[1])
-	if msg, confirmed := checkIncompleteDiscSet(sys, sysDir, num, group); confirmed {
-		if msg != "" {
-			report.Add(audit.Warn, audit.CategoryStructure, sys, base, msg, "")
+	status := checkIncompleteDiscSet(sys, sysDir, num, group)
+	if status.confirmed {
+		if status.incomplete() {
+			report.Add(audit.Warn, audit.CategoryStructure, sys, base, status.message(), "")
 		}
 		return
 	}
 	report.Add(audit.Warn, audit.CategoryStructure, sys, base,
 		"loose multi-disc file; belongs in a .m3u directory", "m3u")
+}
+
+// discSetStatus is checkIncompleteDiscSet/matchIncompleteDiscSet's
+// structured verdict for a lone "(Disc N)"-tagged file - shared between
+// check's own finding message (message) and commands.Discs' dedicated
+// report, so neither has to parse the other's formatted text back apart.
+// confirmed is false (caller falls back to the generic "belongs in a
+// .m3u directory" message, same as before this check existed) when
+// there's no embedded DAT for the system, the file is a .chd/.rvz/.cso
+// romctl would need chdman/dolphin-tool to get raw content out of (check
+// never shells out to an external tool - that's verify's job), or none
+// of the disc's own file(s) hash-match anything in the DAT at all. When
+// confirmed is true, incomplete() tells apart a genuinely missing disc
+// (len(missing) > 0) from the DAT itself showing this title has only
+// ever had one disc - nothing wrong to report, an improvement over the
+// old unconditional "belongs in a .m3u directory" guess for that case.
+type discSetStatus struct {
+	confirmed  bool
+	title      string
+	present    int   // the one disc number already known to be on disk
+	totalDiscs int   // the DAT's own count of discs for title
+	missing    []int // totalDiscs' disc numbers not on disk, sorted
+}
+
+func (s discSetStatus) incomplete() bool { return s.confirmed && len(s.missing) > 0 }
+
+// message is the check finding text for an incomplete set; empty (and
+// never called) when !incomplete().
+func (s discSetStatus) message() string {
+	parts := make([]string, len(s.missing))
+	for i, n := range s.missing {
+		parts[i] = strconv.Itoa(n)
+	}
+	return fmt.Sprintf("incomplete disc set (%s): have disc %d of %d, missing %s",
+		s.title, s.present, s.totalDiscs, strings.Join(parts, ", "))
 }
 
 // checkIncompleteDiscSet is the gated, DAT-aware follow-up for a lone
@@ -368,28 +404,17 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 // Hashing+DAT-matching only this one file (never a whole system's worth)
 // keeps this cheap enough to run unconditionally: the expensive part
 // only ever happens on the rare file it's actually needed for.
-//
-// confirmed is false (caller falls back to the generic "belongs in a
-// .m3u directory" message, same as before this check existed) when
-// there's no embedded DAT for sys, the file is a .chd/.rvz/.cso romctl
-// would need chdman/dolphin-tool to get raw content out of (check never
-// shells out to an external tool - that's verify's job), or none of this
-// disc's own file(s) hash-match anything in the DAT at all. When
-// confirmed is true, msg is either the "incomplete disc set" finding
-// text, or "" when the DAT itself shows this title has only ever had one
-// disc - nothing wrong to report, and an improvement over the old
-// unconditional "belongs in a .m3u directory" guess for that case.
 // filesForDisc is every file sharing the same title and num's disc
 // number - more than one for a raw multi-track CD dump with no .cue
 // sheet (see discTrackTagRE).
-func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile) (msg string, confirmed bool) {
+func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile) discSetStatus {
 	switch strings.ToLower(filepath.Ext(filesForDisc[0].base)) {
 	case ".chd", ".rvz", ".cso":
-		return "", false
+		return discSetStatus{}
 	}
 	df, ok, err := datdb.Load(sys, "")
 	if !ok || err != nil {
-		return "", false
+		return discSetStatus{}
 	}
 	return matchIncompleteDiscSet(df, sysDir, num, filesForDisc)
 }
@@ -400,7 +425,7 @@ func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile
 // find which df Game they belong to, then compare the DAT's own total
 // disc count for that title against the single disc number already
 // known to be present.
-func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesForDisc []discFile) (msg string, confirmed bool) {
+func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesForDisc []discFile) discSetStatus {
 	var title string
 	matched := false
 	for _, f := range filesForDisc {
@@ -414,7 +439,7 @@ func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesFor
 		}
 	}
 	if !matched {
-		return "", false
+		return discSetStatus{}
 	}
 
 	canonical := discGroupKey(title)
@@ -434,7 +459,7 @@ func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesFor
 		}
 	}
 	if len(expected) <= 1 {
-		return "", true
+		return discSetStatus{confirmed: true, title: canonical, present: num, totalDiscs: len(expected)}
 	}
 
 	var missing []int
@@ -444,12 +469,10 @@ func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesFor
 		}
 	}
 	sort.Ints(missing)
-	parts := make([]string, len(missing))
-	for i, n := range missing {
-		parts[i] = strconv.Itoa(n)
+	return discSetStatus{
+		confirmed: true, title: canonical, present: num,
+		totalDiscs: len(expected), missing: missing,
 	}
-	return fmt.Sprintf("incomplete disc set (%s): have disc %d of %d, missing %s",
-		canonical, num, len(expected), strings.Join(parts, ", ")), true
 }
 
 // datMatchByHash finds the Game in df whose any single ROM's CRC/MD5/

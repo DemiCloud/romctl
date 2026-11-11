@@ -49,7 +49,7 @@ type cmdInfo struct {
 }
 
 var commandOrder = []string{
-	"check", "bios", "dupes", "verify", "collection", "identify", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
+	"check", "discs", "bios", "dupes", "verify", "collection", "identify", "system", "fix", "rename", "unpack", "chd", "m3u", "n64",
 	"snes", "xiso", "rvz", "ps3", "saves", "relocate", "scrape", "prune", "clean", "sync", "tools",
 }
 
@@ -62,11 +62,12 @@ var commandGroups = []struct {
 	names []string
 }{
 	{"", []string{"check", "fix", "sync"}},
-	{"Other:", []string{"bios", "dupes", "verify", "collection", "identify", "system", "scrape", "prune", "clean", "tools"}},
+	{"Other:", []string{"discs", "bios", "dupes", "verify", "collection", "identify", "system", "scrape", "prune", "clean", "tools"}},
 }
 
 var commandTable = map[string]cmdInfo{
 	"check":      {"audit systems and BIOS files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagNaming, flagFormat}},
+	"discs":      {"list confirmed-incomplete multi-disc sets (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagFormat}},
 	"bios":       {"audit BIOS files only", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"dupes":      {"scan for exact (byte-for-byte) duplicate files (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},
 	"verify":     {"verify every CHD's data against its own checksums (read-only)", "[SYSTEM...|all]", []string{flagRoot, flagVerbose, flagFormat}},

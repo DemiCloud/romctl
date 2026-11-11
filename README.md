@@ -211,7 +211,8 @@ falls back to disk when it isn't safe to use.
 
 | Command | Action |
 |---|---|
-| `check` | Audit systems and BIOS files (naming, structure, containers, BIOS). Read-only. Exits 1 if anything is `FAIL`. `-v`/`--verbose` prints every finding instead of the Checks/Fixes tables. See [Output format](#output-format) for `--format`. |
+| `check` | Audit systems and BIOS files (naming, structure, containers, BIOS). Read-only. Exits 1 if anything is `FAIL`. `-v`/`--verbose` prints every finding instead of the Checks/Fixes tables. The Fixes table's `Auto-Fix` column says whether romctl itself can resolve a row (`yes`) or it needs you to acquire something (`no`, always, for a missing BIOS or an incomplete disc set - see [Out of scope](#out-of-scope)) - either way, `Fix` still names a command or instruction. See [Output format](#output-format) for `--format`. |
+| `discs` | List every confirmed-incomplete multi-disc set (read-only) - the dedicated, fast detail view `check`'s own "Incomplete disc set" row points at, instead of the whole, unscoped `check -v`. See [Library conventions](#library-conventions). |
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
@@ -578,7 +579,9 @@ confirms which one by hashing that one file and checking it against the
 embedded DAT - if the DAT shows the game genuinely has more discs than this
 one, it's reported as an **incomplete disc set** (acquire the rest, or delete
 what you have) instead of the usual "belongs in a `.m3u` directory" `fix: m3u`
-suggestion, which wouldn't actually fix anything here.
+suggestion, which wouldn't actually fix anything here. `romctl discs` lists
+every confirmed-incomplete set directly, without re-running `check`'s other
+categories just to find these lines.
 
 ### Naming
 
@@ -1043,6 +1046,14 @@ Notes:
   itself can audit its own sets directly (`mame -verifyroms`, checked
   against whatever core version you're actually running), which romctl
   doesn't reimplement or wrap.
+
+- **Acquiring ROM/BIOS content, including the rest of an incomplete
+  multi-disc set.** romctl assumes every user has legally acquired their
+  own ROM and BIOS files, and does not engage in or facilitate piracy.
+  Every finding that boils down to "acquire this file" - a missing/bad
+  BIOS, an incomplete disc set (see `discs` in the command table above) -
+  is reported as `Auto-Fix: no` in `check`'s Fixes table and always will
+  be: romctl tells you what's missing, never where to get it.
 
 ## License
 

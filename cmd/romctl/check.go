@@ -87,6 +87,29 @@ func newVerifyCmd() *cobra.Command {
 	}
 }
 
+func newDiscsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "discs [SYSTEM...|all]",
+		Short:             "list confirmed-incomplete multi-disc sets (read-only)",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeSystems,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			systems, err := resolveSystems(args)
+			if err != nil {
+				return err
+			}
+			ok, err := commands.Discs(appCtx.lib, systems, appCtx.format)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errSilentFailure
+			}
+			return nil
+		},
+	}
+}
+
 func newBiosCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:               "bios [SYSTEM...|all]",

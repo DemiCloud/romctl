@@ -64,6 +64,18 @@ var fixLabels = map[string]string{
 	"relocate": "Relocate misfiled ROM",
 }
 
+// labelDetailCommands maps a handful of command-less (fix=="") finding
+// labels - see explanations - to a more specific detail command than
+// their own category's generic fallback (detailCommand's check -v for
+// anything not BIOS/Duplicates/Verify). Today just "Incomplete disc
+// set": commands.Discs is a purpose-built, fast, focused report for
+// exactly that finding, instead of pointing at the whole unscoped
+// "check -v" (every category, every system) just to see which titles
+// are missing a disc.
+var labelDetailCommands = map[string]string{
+	"Incomplete disc set": "discs",
+}
+
 // tally is one Category's running counts: scanned is every item Scan was
 // called for (whether or not it produced a finding), fail/warn/info are
 // the findings actually recorded. Table's Pass column is scanned minus
@@ -366,12 +378,20 @@ func explainLabel(category Category, message string) string {
 // fixRow is one row of Fixes' table: issueType is what's wrong, count is
 // how many findings it covers, system is where (a real system name,
 // "BIOS"/a category name once rows are collapsed together, or "all"),
-// fix is the command (or, for a command-less finding, the plain-English
-// instruction) to resolve it.
+// autoFix is whether some romctl command can actually resolve it itself
+// (true only for a knownFixes-backed row - see fixRows), and fix is that
+// command when autoFix, or, when not, either a plain-English instruction
+// or a read-only detail command (bios -v, discs, check -v, ...) that
+// shows exactly what's wrong without claiming to fix it. Acquiring a
+// replacement BIOS/ROM or the rest of an incomplete disc set is always
+// autoFix=false and always will be: sourcing that content is explicitly
+// out of scope (see AGENTS.md's Scope boundaries) regardless of how the
+// finding is otherwise reported.
 type fixRow struct {
 	issueType   string
 	count       int
 	system, fix string
+	autoFix     bool
 }
 
 // detailCommand returns the command that shows every instance behind a
@@ -461,7 +481,7 @@ func (r *Report) fixRows() []fixRow {
 				sys = s
 			}
 		}
-		rows = append(rows, fixRow{issueType: fixLabels[fx], count: cmdCounts[fx], system: sys, fix: r.commandHint(fx, sys)})
+		rows = append(rows, fixRow{issueType: fixLabels[fx], count: cmdCounts[fx], system: sys, fix: r.commandHint(fx, sys), autoFix: true})
 	}
 
 	type bucketKey struct {
@@ -500,7 +520,27 @@ func (r *Report) fixRows() []fixRow {
 		if k.category == CategoryBios {
 			sys = "BIOS"
 		}
-		rows = append(rows, fixRow{issueType: k.label, count: len(fs), system: sys, fix: r.detailCommand(k.category)})
+		fix := r.detailCommand(k.category)
+		// A few command-less labels have a more specific, purpose-built
+		// detail command than their own category's generic fallback
+		// (check -v/bios -v/...) - see labelDetailCommands - and are
+		// worth naming the actually-affected system(s) for, the same way
+		// the knownFixes-backed rows above already do, rather than the
+		// bare category-name placeholder every other collapsed row uses.
+		if cmd, ok := labelDetailCommands[k.label]; ok {
+			sys = "all"
+			sysSet := map[string]bool{}
+			for _, f := range fs {
+				sysSet[f.system] = true
+			}
+			if len(sysSet) == 1 {
+				for s := range sysSet {
+					sys = s
+				}
+			}
+			fix = r.commandHint(cmd, sys)
+		}
+		rows = append(rows, fixRow{issueType: k.label, count: len(fs), system: sys, fix: fix})
 	}
 	return rows
 }
@@ -519,9 +559,13 @@ func (r *Report) Fixes(w io.Writer) {
 	fmt.Fprintln(w)
 	tableRows := make([]table.Row, len(rows))
 	for i, row := range rows {
-		tableRows[i] = table.Row{row.issueType, row.count, row.system, row.fix}
+		autoFix := "no"
+		if row.autoFix {
+			autoFix = "yes"
+		}
+		tableRows[i] = table.Row{row.issueType, row.count, row.system, autoFix, row.fix}
 	}
-	cliutil.RenderTable(w, r.format, []string{"Issue Type", "Count", "System", "Fix"}, tableRows)
+	cliutil.RenderTable(w, r.format, []string{"Issue Type", "Count", "System", "Auto-Fix", "Fix"}, tableRows)
 }
 
 // structuredFinding is one finding's shape in Encode's json/yaml/toml/csv

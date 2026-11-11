@@ -101,6 +101,21 @@ Key `internal/` packages:
   `.cso` file is left unconfirmed rather than extracted (same "`check`
   never shells out to an external tool" boundary `verify` exists to
   cross instead) - see `checkIncompleteDiscSet`'s doc comment.
+  `romctl discs [SYSTEM...|all]` is the dedicated, fast, focused report
+  for exactly these findings (`commands.Discs`, reusing
+  `buildDiscGroups`/`checkIncompleteDiscSet` directly rather than
+  duplicating the scan) - `check`'s own Fixes table points its
+  "Incomplete disc set" bucket there (`audit.labelDetailCommands`)
+  instead of the generic, unscoped `check -v`.
+- **`check`'s Fixes table names whether romctl can actually fix a given
+  issue itself.** The `Auto-Fix` column is `yes` only for a row backed by
+  a real romctl command (`knownFixes`, e.g. `m3u`/`chd`/`rename`); every
+  command-less finding (`fix==""`, e.g. a missing BIOS file or an
+  incomplete disc set) is `no`, regardless of what instructional text or
+  detail command (`bios -v`/`discs`/`check -v`) its own `Fix` column
+  shows. Acquiring a replacement BIOS file or the rest of an incomplete
+  disc set is always `no` and always will be - romctl does not source or
+  provide ROM/BIOS content; see "Scope boundaries" below.
 - **External tool invocations go through `executil`.** `chdman`,
   `dolphin-tool` and `extract-xiso` get stdin from the null device via
   `executil.Run` (buffered output, shown only on failure); `rsync`/`ssh`
@@ -336,7 +351,15 @@ Two deliberate, lasting limitations, not TODOs:
   hard turned out to resolve for free through `collection`'s existing
   per-system shared hash pool, no new matching logic needed), just no
   equivalent trustworthy, version-matched DAT source lined up for them yet.
-- DRM decryption and sourcing of ROMs or firmware are out of scope.
+- DRM decryption and sourcing of ROMs or firmware are out of scope. This
+  isn't a gap to close later: romctl's official position is that every
+  user has legally acquired their own ROM and BIOS files, and the project
+  does not engage in or facilitate piracy. A finding that boils down to
+  "acquire this file" (a missing/bad BIOS, an incomplete multi-disc set -
+  see `discs`/the "incomplete disc set" check) is always reported as
+  `Auto-Fix: no` in `check`'s Fixes table for exactly this reason, and
+  always will be - romctl tells you what's missing, never where to get
+  it.
 - Scraping (querying ScreenScraper and writing gamelist.xml/media) is in
   scope, but romctl never talks to a scraper API itself: writing a
   ScreenScraper client was evaluated and declined, since `devid`/
