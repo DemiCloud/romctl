@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/actions"
 	"github.com/demicloud/romctl/internal/audit"
@@ -21,6 +22,7 @@ import (
 	"github.com/demicloud/romctl/internal/formats/xiso"
 	"github.com/demicloud/romctl/internal/library"
 	"github.com/demicloud/romctl/internal/systemdb"
+	"github.com/demicloud/romctl/internal/tools"
 )
 
 // Check audits every system (structure, naming, formats) and BIOS files,
@@ -42,6 +44,15 @@ import (
 // I/O-bound work. Under a structured format (json/yaml/toml/csv), the
 // tables are skipped entirely and every finding plus the summary tally is
 // encoded instead - see audit.Report.Encode.
+//
+// The structure category is the one place this isn't always instant:
+// confirming an "incomplete disc set" finding for an already-converted
+// .chd/.rvz needs a real chdman/dolphin-tool extraction (see
+// discCompletenessJob/discFileHashes), gated behind the same cheap,
+// directory-listing-only ambiguity check that's instant for everything
+// else. Every such candidate across every system is collected first and
+// resolved through one shared worker pool afterward (discJobCollector),
+// not inline as each is found - see that type's own doc comment for why.
 func Check(lib *library.Library, systems []string, scheme actions.Scheme, verbose bool, format cliutil.Format, rootHint string) (bool, error) {
 	report := audit.New(os.Stdout, verbose, format, rootHint)
 	report.CollapseBios()
@@ -53,8 +64,23 @@ func Check(lib *library.Library, systems []string, scheme actions.Scheme, verbos
 			return true
 		}},
 		{Label: string(audit.CategoryStructure), Fn: func() bool {
-			cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys) })
+			jobs := &discJobCollector{}
+			cliutil.Parallel(systems, func(sys string) { checkStructure(report, lib, sys, jobs) })
 			checkUnknownSystems(report, lib, systems)
+			// Confirming an ambiguous disc (see discCompletenessJob) is the
+			// one part of this phase that can be genuinely slow - a real
+			// chdman/dolphin-tool extraction, not a filename check. The
+			// scan above only collects candidates; running them through
+			// one shared worker pool here, instead of resolving each
+			// inline as it's found, means two ambiguous discs in the same
+			// system - or across different systems - run concurrently
+			// rather than one after another (confirmed against a real
+			// library: two such discs in one system took ~30s run
+			// serially this way before this change).
+			discTools := &discToolResolver{}
+			cliutil.Parallel(jobs.jobs, func(j discCompletenessJob) {
+				reportDiscCompleteness(report, j.sys, j.class, j.sysDir, j.reportPath, j.num, j.group, discTools, j.fallback)
+			})
 			return true
 		}},
 		{Label: string(audit.CategoryContainers), Fn: func() bool {
@@ -140,7 +166,42 @@ func checkNaming(report *audit.Report, lib *library.Library, sys string, scheme 
 	}
 }
 
-func checkStructure(report *audit.Report, lib *library.Library, sys string) {
+// discCompletenessJob is one ambiguous disc - loose (checkStructureFile)
+// or already grouped inside a Title.m3u/ directory (checkM3uDiscSet) -
+// deferred for confirmation rather than resolved on the spot: see
+// discJobCollector.
+type discCompletenessJob struct {
+	sys        string
+	class      systemdb.Class
+	sysDir     string
+	reportPath string
+	num        int
+	group      []discFile
+	fallback   func()
+}
+
+// discJobCollector gathers every discCompletenessJob found across every
+// system's cheap structure scan (checkStructure runs one per system,
+// concurrently via cliutil.Parallel - hence the mutex), so Check can run
+// all of them through one shared worker pool afterward instead of
+// resolving each inline as it's found. Without this, two ambiguous
+// discs in the very same system would confirm one after another even
+// though confirming one is a real chdman/dolphin-tool extraction, not a
+// filename check - confirmed against a real library, where exactly that
+// (two such discs in one system) took roughly twice as long run this
+// way as run concurrently.
+type discJobCollector struct {
+	mu   sync.Mutex
+	jobs []discCompletenessJob
+}
+
+func (c *discJobCollector) add(j discCompletenessJob) {
+	c.mu.Lock()
+	c.jobs = append(c.jobs, j)
+	c.mu.Unlock()
+}
+
+func checkStructure(report *audit.Report, lib *library.Library, sys string, jobs *discJobCollector) {
 	class := systemdb.ClassOf(sys)
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)
@@ -156,14 +217,14 @@ func checkStructure(report *audit.Report, lib *library.Library, sys string) {
 		report.Scan(audit.CategoryStructure, 1)
 		path := filepath.Join(sysDir, base)
 		if e.IsDir() {
-			checkStructureDir(report, sys, path)
+			checkStructureDir(report, sys, class, path, jobs)
 		} else {
-			checkStructureFile(report, sys, class, path, sysDir, discGroups)
+			checkStructureFile(report, sys, class, path, sysDir, discGroups, jobs)
 		}
 	}
 }
 
-func checkStructureDir(report *audit.Report, sys, dirPath string) {
+func checkStructureDir(report *audit.Report, sys string, class systemdb.Class, dirPath string, jobs *discJobCollector) {
 	base := filepath.Base(dirPath)
 	switch {
 	case base == "_to_delete":
@@ -172,7 +233,32 @@ func checkStructureDir(report *audit.Report, sys, dirPath string) {
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "leftover extraction directory", "")
 	case strings.HasSuffix(base, ".m3u"):
 		checkM3uDir(report, sys, dirPath)
+		checkM3uDiscSet(sys, class, dirPath, jobs)
 	}
+}
+
+// checkM3uDiscSet is checkStructureFile's lone-disc ambiguity check,
+// extended to a disc already grouped inside a Title.m3u/ directory: a
+// directory holding only one disc file is just as ambiguous as a loose
+// one with no sibling (see m3uLoneDiscGroup), and romctl's own `m3u`
+// command refusing to create a one-file group going forward (see its
+// own doc comment) doesn't retroactively fix one that already exists.
+// A directory already holding more than one distinct disc number is
+// left alone - not re-verified against the DAT - same proportional
+// scope as the loose-file case. No fallback job field set: unlike a
+// loose file, there's no pre-existing "needs grouping" warning to fall
+// back to for something that's already correctly grouped.
+func checkM3uDiscSet(sys string, class systemdb.Class, dirPath string, jobs *discJobCollector) {
+	name := filepath.Base(dirPath)
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return
+	}
+	group, ok := m3uLoneDiscGroup(name, entries)
+	if !ok {
+		return
+	}
+	jobs.add(discCompletenessJob{sys: sys, class: class, sysDir: dirPath, reportPath: name, num: group[0].num, group: group})
 }
 
 func checkM3uDir(report *audit.Report, sys, dirPath string) {
@@ -298,7 +384,45 @@ func buildDiscGroups(entries []os.DirEntry) map[string][]discFile {
 	return groups
 }
 
-func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath, sysDir string, discGroups map[string][]discFile) {
+// m3uLoneDiscGroup returns the disc files in a Title.m3u/ directory's
+// already-read entries (skipping the playlist itself, a nested
+// _to_delete, and a leftover extraction dir) when ok is true: all of
+// them share one disc number, the same ambiguous "single-disc game, or
+// missing the rest" case checkStructureFile already resolves for a
+// loose file - just for one already grouped. ok is false when there's
+// nothing to anchor on (a disc file with no "(Disc N)" tag at all, or
+// no disc files at all) or the directory already holds more than one
+// distinct disc number - an already-healthy-looking group this doesn't
+// re-verify. playlistName is the directory's own base name (also the
+// playlist file's name inside it, ES-DE's convention).
+func m3uLoneDiscGroup(playlistName string, entries []os.DirEntry) (group []discFile, ok bool) {
+	for _, e := range entries {
+		base := e.Name()
+		if e.IsDir() || base == playlistName || base == "_to_delete" || strings.HasPrefix(base, "_extract.") {
+			continue
+		}
+		name := strings.TrimSuffix(base, filepath.Ext(base))
+		m := discTagRE.FindStringSubmatch(name)
+		if m == nil {
+			return nil, false
+		}
+		num, err := strconv.Atoi(m[1])
+		if err != nil {
+			return nil, false
+		}
+		group = append(group, discFile{num, base})
+	}
+	if len(group) == 0 {
+		return nil, false
+	}
+	nums := map[int]bool{}
+	for _, f := range group {
+		nums[f.num] = true
+	}
+	return group, len(nums) == 1
+}
+
+func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, filePath, sysDir string, discGroups map[string][]discFile, jobs *discJobCollector) {
 	base := filepath.Base(filePath)
 	if isLeftoverInfix(base) {
 		report.Add(audit.Fail, audit.CategoryStructure, sys, base, "incomplete conversion leftover; delete it", "")
@@ -349,15 +473,37 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 		return
 	}
 	num, _ := strconv.Atoi(m[1])
-	status := checkIncompleteDiscSet(sys, sysDir, num, group)
+	jobs.add(discCompletenessJob{
+		sys: sys, class: class, sysDir: sysDir, reportPath: base, num: num, group: group,
+		fallback: func() {
+			report.Add(audit.Warn, audit.CategoryStructure, sys, base,
+				"loose multi-disc file; belongs in a .m3u directory", "m3u")
+		},
+	})
+}
+
+// reportDiscCompleteness runs checkIncompleteDiscSet for one ambiguous
+// disc (loose, via checkStructureFile, or already grouped inside a
+// Title.m3u/ directory, via checkM3uDiscSet) and reports the result: a
+// confirmed, genuinely incomplete set as a Warn finding at reportPath: a
+// bare filename for a loose disc, a Title.m3u directory name for one
+// already grouped. Nothing at all when the DAT confirms the title
+// really is single-disc. onFallback, if non-nil, runs when nothing
+// could be confirmed either way (no DAT, no hash match, or chdman/
+// dolphin-tool unavailable) - checkM3uDiscSet passes nil: unlike a loose
+// file, there's no pre-existing "needs grouping" warning to fall back to
+// for something that's already correctly grouped.
+func reportDiscCompleteness(report *audit.Report, sys string, class systemdb.Class, sysDir, reportPath string, num int, filesForDisc []discFile, discTools *discToolResolver, onFallback func()) {
+	status := checkIncompleteDiscSet(sys, class, sysDir, num, filesForDisc, discTools)
 	if status.confirmed {
 		if status.incomplete() {
-			report.Add(audit.Warn, audit.CategoryStructure, sys, base, status.message(), "")
+			report.Add(audit.Warn, audit.CategoryStructure, sys, reportPath, status.message(), "")
 		}
 		return
 	}
-	report.Add(audit.Warn, audit.CategoryStructure, sys, base,
-		"loose multi-disc file; belongs in a .m3u directory", "m3u")
+	if onFallback != nil {
+		onFallback()
+	}
 }
 
 // discSetStatus is checkIncompleteDiscSet/matchIncompleteDiscSet's
@@ -365,15 +511,16 @@ func checkStructureFile(report *audit.Report, sys string, class systemdb.Class, 
 // check's own finding message (message) and commands.Discs' dedicated
 // report, so neither has to parse the other's formatted text back apart.
 // confirmed is false (caller falls back to the generic "belongs in a
-// .m3u directory" message, same as before this check existed) when
-// there's no embedded DAT for the system, the file is a .chd/.rvz/.cso
-// romctl would need chdman/dolphin-tool to get raw content out of (check
-// never shells out to an external tool - that's verify's job), or none
-// of the disc's own file(s) hash-match anything in the DAT at all. When
-// confirmed is true, incomplete() tells apart a genuinely missing disc
-// (len(missing) > 0) from the DAT itself showing this title has only
-// ever had one disc - nothing wrong to report, an improvement over the
-// old unconditional "belongs in a .m3u directory" guess for that case.
+// .m3u directory" message, or nothing at all for an already-grouped
+// disc - see reportDiscCompleteness) when there's no embedded DAT for
+// the system, extraction of a .chd/.rvz failed or chdman/dolphin-tool
+// isn't available (a .cso is left unsupported entirely - no extraction
+// path for it today), or none of the disc's own file(s) hash-match
+// anything in the DAT at all. When confirmed is true, incomplete() tells
+// apart a genuinely missing disc (len(missing) > 0) from the DAT itself
+// showing this title has only ever had one disc - nothing wrong to
+// report, an improvement over the old unconditional "belongs in a .m3u
+// directory" guess for that case.
 type discSetStatus struct {
 	confirmed  bool
 	title      string
@@ -387,36 +534,104 @@ func (s discSetStatus) incomplete() bool { return s.confirmed && len(s.missing) 
 // message is the check finding text for an incomplete set; empty (and
 // never called) when !incomplete().
 func (s discSetStatus) message() string {
-	parts := make([]string, len(s.missing))
-	for i, n := range s.missing {
-		parts[i] = strconv.Itoa(n)
-	}
 	return fmt.Sprintf("incomplete disc set (%s): have disc %d of %d, missing %s",
-		s.title, s.present, s.totalDiscs, strings.Join(parts, ", "))
+		s.title, s.present, s.totalDiscs, joinInts(s.missing))
 }
 
-// checkIncompleteDiscSet is the gated, DAT-aware follow-up for a lone
-// "(Disc N)"-tagged file checkStructureFile's cheap filename check
-// already found has no sibling disc number on disk: a disc-tagged file
-// in that position is just as likely to be a single-disc game whose name
-// happens to carry a "(Disc 1)" tag as it is to be genuinely missing the
-// rest of a multi-disc set, and filenames alone can't tell those apart.
-// Hashing+DAT-matching only this one file (never a whole system's worth)
-// keeps this cheap enough to run unconditionally: the expensive part
-// only ever happens on the rare file it's actually needed for.
-// filesForDisc is every file sharing the same title and num's disc
-// number - more than one for a raw multi-track CD dump with no .cue
-// sheet (see discTrackTagRE).
-func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile) discSetStatus {
-	switch strings.ToLower(filepath.Ext(filesForDisc[0].base)) {
-	case ".chd", ".rvz", ".cso":
-		return discSetStatus{}
+func joinInts(nums []int) string {
+	parts := make([]string, len(nums))
+	for i, n := range nums {
+		parts[i] = strconv.Itoa(n)
 	}
+	return strings.Join(parts, ", ")
+}
+
+// discToolResolver lazily resolves chdman/dolphin-tool, each exactly
+// once, the first time discFileHashes actually needs to extract a .chd/
+// .rvz file to confirm an ambiguous disc. Deliberately not resolved up
+// front the way chd/rvz/scrape/verify resolve their own tool before any
+// work starts (see AGENTS.md's "check tool availability before acting"
+// invariant): unlike those, check must stay usable with neither tool
+// installed on the common path, since most runs never hit a disc
+// ambiguous enough to need one at all. Scoped to one Check()/Discs()
+// call (each creates its own), not process-global, so concurrent or
+// repeated calls (tests) never share stale state; sync.Once makes it
+// safe to share across checkStructure's own per-system goroutines.
+type discToolResolver struct {
+	chdmanOnce  sync.Once
+	chdmanPath  string
+	chdmanErr   error
+	dolphinOnce sync.Once
+	dolphinPath string
+	dolphinErr  error
+}
+
+func (r *discToolResolver) chdman() (string, error) {
+	r.chdmanOnce.Do(func() { r.chdmanPath, r.chdmanErr = tools.Resolve("chdman") })
+	return r.chdmanPath, r.chdmanErr
+}
+
+func (r *discToolResolver) dolphinTool() (string, error) {
+	r.dolphinOnce.Do(func() { r.dolphinPath, r.dolphinErr = tools.Resolve("dolphin-tool") })
+	return r.dolphinPath, r.dolphinErr
+}
+
+// discFileHashes returns every hash discoverable for f: a plain
+// whole-file hash for anything still in a raw/pre-conversion format,
+// chdman-extracted per-track hashes for a .chd (hashDiscCHD; class picks
+// CD/DVD/UMD extraction mode - see collection's own --verify-chd path,
+// which this reuses directly), or a dolphin-tool-extracted whole-file
+// hash for a .rvz (hashDiscRVZ, same reuse). A .cso has no equivalent
+// "just extract this one file" path today and is left unsupported.
+func discFileHashes(sysDir string, f discFile, class systemdb.Class, discTools *discToolResolver) ([]discTrackHash, error) {
+	path := filepath.Join(sysDir, f.base)
+	switch strings.ToLower(filepath.Ext(f.base)) {
+	case ".chd":
+		chdmanPath, err := discTools.chdman()
+		if err != nil {
+			return nil, err
+		}
+		return hashDiscCHD(chdmanPath, path, class)
+	case ".rvz":
+		dolphinToolPath, err := discTools.dolphinTool()
+		if err != nil {
+			return nil, err
+		}
+		h, err := hashDiscRVZ(dolphinToolPath, path)
+		if err != nil {
+			return nil, err
+		}
+		return []discTrackHash{h}, nil
+	case ".cso":
+		return nil, fmt.Errorf("%s: .cso extraction isn't supported here", path)
+	default:
+		crc, md5sum, sha1sum, err := hashROM(path)
+		if err != nil {
+			return nil, err
+		}
+		return []discTrackHash{{crc, md5sum, sha1sum}}, nil
+	}
+}
+
+// checkIncompleteDiscSet is the gated, DAT-aware follow-up for an
+// ambiguous disc - a lone "(Disc N)"-tagged file with no sibling disc
+// number, loose or already grouped inside a Title.m3u/ directory: a
+// disc-tagged file in that position is just as likely to be a
+// single-disc game whose name happens to carry a "(Disc 1)" tag as it
+// is to be genuinely missing the rest of a multi-disc set, and
+// filenames alone can't tell those apart. Hashing+DAT-matching only
+// this one disc (never a whole system's worth) keeps this cheap enough
+// to run unconditionally even though it now extracts a .chd/.rvz when
+// that's what it finds: the expensive part only ever happens on the
+// rare disc it's actually needed for. filesForDisc is every file
+// sharing the same title and num's disc number - more than one for a
+// raw multi-track CD dump with no .cue sheet (see discTrackTagRE).
+func checkIncompleteDiscSet(sys string, class systemdb.Class, sysDir string, num int, filesForDisc []discFile, discTools *discToolResolver) discSetStatus {
 	df, ok, err := datdb.Load(sys, "")
 	if !ok || err != nil {
 		return discSetStatus{}
 	}
-	return matchIncompleteDiscSet(df, sysDir, num, filesForDisc)
+	return matchIncompleteDiscSet(df, class, sysDir, num, filesForDisc, discTools)
 }
 
 // matchIncompleteDiscSet is checkIncompleteDiscSet's DAT-independent
@@ -425,17 +640,20 @@ func checkIncompleteDiscSet(sys, sysDir string, num int, filesForDisc []discFile
 // find which df Game they belong to, then compare the DAT's own total
 // disc count for that title against the single disc number already
 // known to be present.
-func matchIncompleteDiscSet(df *datdb.Datafile, sysDir string, num int, filesForDisc []discFile) discSetStatus {
+func matchIncompleteDiscSet(df *datdb.Datafile, class systemdb.Class, sysDir string, num int, filesForDisc []discFile, discTools *discToolResolver) discSetStatus {
 	var title string
 	matched := false
+outer:
 	for _, f := range filesForDisc {
-		crc, md5sum, sha1sum, err := hashROM(filepath.Join(sysDir, f.base))
+		hashes, err := discFileHashes(sysDir, f, class, discTools)
 		if err != nil {
 			continue
 		}
-		if name, ok := datMatchByHash(df, crc, md5sum, sha1sum); ok {
-			title, matched = name, true
-			break
+		for _, h := range hashes {
+			if name, ok := datMatchByHash(df, h.crc, h.md5sum, h.sha1sum); ok {
+				title, matched = name, true
+				break outer
+			}
 		}
 	}
 	if !matched {

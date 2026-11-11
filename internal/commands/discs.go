@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/library"
@@ -40,7 +41,7 @@ type discSetRow struct {
 // that.
 func Discs(lib *library.Library, systems []string, format cliutil.Format) (bool, error) {
 	esdeNames, _ := lib.ESDESystems()
-	var rows []discSetRow
+	var jobs []discsJob
 	for _, sys := range systems {
 		class := systemdb.ClassOf(sys)
 		if class == systemdb.ClassArcade {
@@ -52,10 +53,29 @@ func Discs(lib *library.Library, systems []string, format cliutil.Format) (bool,
 			continue
 		}
 		display := systemdb.DisplayNameWith(sys, esdeNames)
-		for _, row := range discSetRowsFor(sys, display, sysDir, entries) {
-			rows = append(rows, row)
-		}
+		jobs = append(jobs, discsJobsFor(sys, display, class, sysDir, entries)...)
 	}
+
+	// Confirming a candidate is a real chdman/dolphin-tool extraction for
+	// a .chd/.rvz, not a filename check - running every candidate across
+	// every system through one shared worker pool, rather than one
+	// system's candidates before moving to the next, is what keeps this
+	// command fast even when a system turns up more than one (see
+	// check's own structure phase, which collects+resolves jobs the same
+	// way for the exact same reason).
+	discTools := &discToolResolver{}
+	var mu sync.Mutex
+	var rows []discSetRow
+	cliutil.Parallel(jobs, func(j discsJob) {
+		status := checkIncompleteDiscSet(j.sys, j.class, j.sysDir, j.num, j.group, discTools)
+		row, ok := discSetRowFrom(j.display, j.sys, status, j.file)
+		if !ok {
+			return
+		}
+		mu.Lock()
+		rows = append(rows, row)
+		mu.Unlock()
+	})
 
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Directory != rows[j].Directory {
@@ -72,14 +92,32 @@ func Discs(lib *library.Library, systems []string, format cliutil.Format) (bool,
 	return true, nil
 }
 
-// discSetRowsFor scans one system's already-read directory listing for
-// confirmed-incomplete disc sets - the exact same buildDiscGroups +
-// checkIncompleteDiscSet logic checkStructureFile uses, just collecting
-// rows instead of audit.Report findings.
-func discSetRowsFor(sys, display, sysDir string, entries []os.DirEntry) []discSetRow {
-	groups := buildDiscGroups(entries)
-	var rows []discSetRow
-	for _, group := range groups {
+// discsJob is one ambiguous disc discsJobsFor found, deferred for
+// confirmation the same way check.go's discCompletenessJob is (see its
+// own doc comment) - a separate, Discs-local type rather than reusing
+// that one directly, since Discs needs the fuller "Title.m3u/Disc.ext"
+// File column value for an already-grouped disc, where check's own
+// reportPath deliberately stays just the directory name (its finding's
+// path convention, shared with checkM3uDir's other findings).
+type discsJob struct {
+	sys, display string
+	class        systemdb.Class
+	sysDir       string
+	file         string // discSetRow's own File column value
+	num          int
+	group        []discFile
+}
+
+// discsJobsFor scans one system's already-read directory listing for
+// ambiguous discs worth confirming - the exact same buildDiscGroups/
+// m3uLoneDiscGroup logic checkStructureFile/checkM3uDiscSet use, just
+// collecting jobs instead of enqueueing them on a shared
+// discJobCollector. Covers both a loose disc and one already grouped
+// inside a Title.m3u/ directory, same scope check's own structure
+// category has.
+func discsJobsFor(sys, display string, class systemdb.Class, sysDir string, entries []os.DirEntry) []discsJob {
+	var jobs []discsJob
+	for _, group := range buildDiscGroups(entries) {
 		nums := map[int]bool{}
 		for _, f := range group {
 			nums[f.num] = true
@@ -87,22 +125,45 @@ func discSetRowsFor(sys, display, sysDir string, entries []os.DirEntry) []discSe
 		if len(nums) != 1 {
 			continue
 		}
-		status := checkIncompleteDiscSet(sys, sysDir, group[0].num, group)
-		if !status.incomplete() {
-			continue
-		}
-		parts := make([]string, len(status.missing))
-		for i, n := range status.missing {
-			parts[i] = strconv.Itoa(n)
-		}
-		rows = append(rows, discSetRow{
-			System:    display,
-			Directory: sys,
-			Title:     status.title,
-			Have:      strconv.Itoa(status.present) + " of " + strconv.Itoa(status.totalDiscs),
-			Missing:   strings.Join(parts, ", "),
-			File:      group[0].base,
+		jobs = append(jobs, discsJob{
+			sys: sys, display: display, class: class, sysDir: sysDir,
+			file: group[0].base, num: group[0].num, group: group,
 		})
 	}
-	return rows
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasSuffix(e.Name(), ".m3u") {
+			continue
+		}
+		dirPath := filepath.Join(sysDir, e.Name())
+		m3uEntries, err := os.ReadDir(dirPath)
+		if err != nil {
+			continue
+		}
+		group, ok := m3uLoneDiscGroup(e.Name(), m3uEntries)
+		if !ok {
+			continue
+		}
+		jobs = append(jobs, discsJob{
+			sys: sys, display: display, class: class, sysDir: dirPath,
+			file: filepath.Join(e.Name(), group[0].base), num: group[0].num, group: group,
+		})
+	}
+	return jobs
+}
+
+// discSetRowFrom builds a discSetRow from a confirmed-incomplete status;
+// ok is false (nothing to add) for anything else - unconfirmed, or
+// confirmed but actually complete.
+func discSetRowFrom(display, sys string, status discSetStatus, file string) (discSetRow, bool) {
+	if !status.incomplete() {
+		return discSetRow{}, false
+	}
+	return discSetRow{
+		System:    display,
+		Directory: sys,
+		Title:     status.title,
+		Have:      strconv.Itoa(status.present) + " of " + strconv.Itoa(status.totalDiscs),
+		Missing:   joinInts(status.missing),
+		File:      file,
+	}, true
 }

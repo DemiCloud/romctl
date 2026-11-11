@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/demicloud/romctl/internal/cliutil"
 	"github.com/demicloud/romctl/internal/datdb"
 	"github.com/demicloud/romctl/internal/library"
+	"github.com/demicloud/romctl/internal/systemdb"
 )
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns
@@ -184,10 +186,17 @@ func TestCheckFlagsInvalidCHDInsideM3UDir(t *testing.T) {
 	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Two discs (not one): a lone disc is ambiguous enough to trigger
+	// checkIncompleteDiscSet's own real chdman extraction attempt (see
+	// its own doc comment) - undesirable in a test that's only about
+	// containers' own CHD-validity check, not disc-completeness.
 	if err := os.WriteFile(filepath.Join(m3uDir, "Game (Disc 01).chd"), []byte("not a real chd"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game (Disc 02).chd"), []byte("not a real chd either"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\nGame (Disc 02).chd\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,8 +220,13 @@ func TestCheckFlagsCDAsDVDMistakeInsideM3UDir(t *testing.T) {
 	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Two discs (not one): a lone disc is ambiguous enough to trigger
+	// checkIncompleteDiscSet's own real chdman extraction attempt (see
+	// its own doc comment) - undesirable in a test that's only about
+	// chd's own CD-vs-DVD-type detection, not disc-completeness.
 	writeFakeCDAsDVDImageCHD(t, filepath.Join(m3uDir, "Game (Disc 01).chd"))
-	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\n"), 0o644); err != nil {
+	writeFakeCDAsDVDImageCHD(t, filepath.Join(m3uDir, "Game (Disc 02).chd"))
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\nGame (Disc 02).chd\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lib := library.Open(root)
@@ -284,10 +298,17 @@ func TestCheckM3uDirRecognizesNestedToDelete(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(m3uDir, "_to_delete"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Two real discs (not one): a lone disc is ambiguous enough to
+	// trigger checkIncompleteDiscSet's own real chdman extraction
+	// attempt (see its own doc comment) - undesirable in a test that's
+	// only about _to_delete recognition, not disc-completeness.
 	if err := os.WriteFile(filepath.Join(m3uDir, "Game (Disc 01).chd"), []byte("disc"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game (Disc 02).chd"), []byte("disc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m3uDir, "Game.m3u"), []byte("Game (Disc 01).chd\nGame (Disc 02).chd\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -481,7 +502,7 @@ func TestMatchIncompleteDiscSetConfirmsMissingDisc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	status := matchIncompleteDiscSet(df, systemdb.ClassCD, sysDir, 1, []discFile{{num: 1, base: base}}, &discToolResolver{})
 	if !status.confirmed {
 		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true (hash should match disc 1)")
 	}
@@ -512,7 +533,7 @@ func TestMatchIncompleteDiscSetSingleDiscGameIsClean(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	status := matchIncompleteDiscSet(df, systemdb.ClassCD, sysDir, 1, []discFile{{num: 1, base: base}}, &discToolResolver{})
 	if !status.confirmed {
 		t.Fatal("matchIncompleteDiscSet() confirmed = false, want true")
 	}
@@ -533,7 +554,7 @@ func TestMatchIncompleteDiscSetUnconfirmedWhenNoHashMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status := matchIncompleteDiscSet(df, sysDir, 1, []discFile{{num: 1, base: base}})
+	status := matchIncompleteDiscSet(df, systemdb.ClassCD, sysDir, 1, []discFile{{num: 1, base: base}}, &discToolResolver{})
 	if status.confirmed {
 		t.Error("matchIncompleteDiscSet() confirmed = true, want false - no hash in the DAT matches this file")
 	}
@@ -586,6 +607,148 @@ func TestCheckFallsBackToM3UMessageWithNoDAT(t *testing.T) {
 	})
 	if !strings.Contains(out, "belongs in a .m3u directory") {
 		t.Errorf("expected the lone disc to fall back to the m3u message with no DAT available, got:\n%s", out)
+	}
+}
+
+func TestM3uLoneDiscGroupDetectsAmbiguousSingleDisc(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "Title.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Title.m3u", "Title (Disc 01).chd"} {
+		if err := os.WriteFile(filepath.Join(m3uDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(m3uDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, ok := m3uLoneDiscGroup("Title.m3u", entries)
+	if !ok || len(group) != 1 || group[0].num != 1 {
+		t.Errorf("m3uLoneDiscGroup() = (%+v, %v), want one disc, num 1, ok", group, ok)
+	}
+}
+
+func TestM3uLoneDiscGroupIgnoresAlreadyMultiDisc(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "Title.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Title.m3u", "Title (Disc 01).chd", "Title (Disc 02).chd"} {
+		if err := os.WriteFile(filepath.Join(m3uDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(m3uDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m3uLoneDiscGroup("Title.m3u", entries); ok {
+		t.Error("m3uLoneDiscGroup() ok = true for an already-two-disc directory, want false (not re-verified)")
+	}
+}
+
+func TestM3uLoneDiscGroupIgnoresUntaggedDisc(t *testing.T) {
+	root := t.TempDir()
+	m3uDir := filepath.Join(root, "Title.m3u")
+	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Title.m3u", "Title.chd"} {
+		if err := os.WriteFile(filepath.Join(m3uDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(m3uDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m3uLoneDiscGroup("Title.m3u", entries); ok {
+		t.Error("m3uLoneDiscGroup() ok = true for a disc with no \"(Disc N)\" tag, want false - nothing to anchor on")
+	}
+}
+
+// fakeDiscTools builds a discToolResolver pre-seeded with the given
+// fake tool paths (see fakeChdmanExtract/fakeDolphinToolConvert), its
+// sync.Once guards already marked done so matchIncompleteDiscSet's own
+// lazy resolution never overwrites them with a real tools.Resolve call.
+func fakeDiscTools(chdmanPath, dolphinPath string) *discToolResolver {
+	r := &discToolResolver{chdmanPath: chdmanPath, dolphinPath: dolphinPath}
+	r.chdmanOnce.Do(func() {})
+	r.dolphinOnce.Do(func() {})
+	return r
+}
+
+// TestMatchIncompleteDiscSetExtractsCHD guards the real fix this
+// session: a lone disc already converted to .chd must actually be
+// extracted (via the fake chdman stand-in here; the real tool in
+// production) and hash-matched, not skipped as unconfirmable the way it
+// used to be - confirmed against a real library, where this exact gap
+// (a GameCube/Wii .rvz case, same shape) was silently missing a genuine
+// 2-disc Redump release's second disc with no way to ever find out.
+func TestMatchIncompleteDiscSetExtractsCHD(t *testing.T) {
+	discData := []byte("disc one data, extracted via fake chdman")
+	df, err := datdb.Parse([]byte(discSetTestDAT(crc32Hex(discData), "deadbeef")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdman := fakeChdmanExtract(t, "", discData) // DVD-shaped: single combined extract
+	sysDir := t.TempDir()
+	base := "Test Game (USA) (Disc 1).chd"
+	writeFakeCHDHeader(filepath.Join(sysDir, base), int64(len(discData)))
+
+	status := matchIncompleteDiscSet(df, systemdb.ClassDVD, sysDir, 1, []discFile{{num: 1, base: base}}, fakeDiscTools(chdman, ""))
+	if !status.incomplete() || status.totalDiscs != 2 {
+		t.Fatalf("status = %+v, want a confirmed incomplete 2-disc set", status)
+	}
+}
+
+// TestMatchIncompleteDiscSetExtractsRVZ is TestMatchIncompleteDiscSetExtractsCHD's
+// GameCube/Wii counterpart - the exact gap confirmed against a real
+// library (see collection's own doc comment).
+func TestMatchIncompleteDiscSetExtractsRVZ(t *testing.T) {
+	discData := []byte("disc one data, extracted via fake dolphin-tool")
+	df, err := datdb.Parse([]byte(discSetTestDAT(crc32Hex(discData), "deadbeef")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dolphinTool := fakeDolphinToolConvert(t, discData)
+	sysDir := t.TempDir()
+	base := "Test Game (USA) (Disc 1).rvz"
+	if err := os.WriteFile(filepath.Join(sysDir, base), []byte("not a real rvz, fake dolphin-tool ignores it"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status := matchIncompleteDiscSet(df, systemdb.ClassDolphin, sysDir, 1, []discFile{{num: 1, base: base}}, fakeDiscTools("", dolphinTool))
+	if !status.incomplete() || status.totalDiscs != 2 {
+		t.Fatalf("status = %+v, want a confirmed incomplete 2-disc set", status)
+	}
+}
+
+// TestMatchIncompleteDiscSetUnconfirmedWhenToolMissing guards the
+// fallback: when chdman/dolphin-tool can't be resolved at all,
+// extraction is skipped and the disc is left unconfirmed, same as a
+// real hash mismatch - never a hard error that would abort the rest of
+// check's run.
+func TestMatchIncompleteDiscSetUnconfirmedWhenToolMissing(t *testing.T) {
+	df, err := datdb.Parse([]byte(discSetTestDAT("deadbeef", "cafef00d")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysDir := t.TempDir()
+	base := "Test Game (USA) (Disc 1).chd"
+	if err := os.WriteFile(filepath.Join(sysDir, base), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &discToolResolver{chdmanErr: fmt.Errorf("chdman not found")}
+	r.chdmanOnce.Do(func() {})
+
+	status := matchIncompleteDiscSet(df, systemdb.ClassDVD, sysDir, 1, []discFile{{num: 1, base: base}}, r)
+	if status.confirmed {
+		t.Errorf("status = %+v, want unconfirmed when chdman can't be resolved", status)
 	}
 }
 

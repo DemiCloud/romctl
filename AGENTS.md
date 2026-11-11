@@ -90,44 +90,62 @@ Key `internal/` packages:
   get it. `romctl tools` reports the same resolution read-only, up front.
   `verify`, despite being read-only itself, follows the same "resolve
   before doing any work" rule since it still shells out to chdman.
-- **`check` stays instant; hashing is always gated behind an anomaly it
-  already found for free.** `checkStructureFile`'s "incomplete disc set"
-  finding is the one place `check` touches a DAT (`datdb.Load`) or hashes
-  a file (`hashROM`) at all - and only for a "(Disc N)"-tagged file whose
-  cheap, directory-listing-only sibling check (`buildDiscGroups`) already
-  found has no other disc number present. Everything else about `check`
-  stays exactly as cheap as before: one hash, on the rare file that's
-  actually ambiguous, never a whole system's worth. A `.chd`/`.rvz`/
-  `.cso` file is left unconfirmed rather than extracted (same "`check`
-  never shells out to an external tool" boundary `verify` exists to
-  cross instead) - see `checkIncompleteDiscSet`'s doc comment.
-  `romctl discs [SYSTEM...|all]` is the dedicated, fast, focused report
-  for exactly these findings (`commands.Discs`, reusing
-  `buildDiscGroups`/`checkIncompleteDiscSet` directly rather than
+- **`check`'s only real cost is gated behind an anomaly it already found
+  for free - but when that anomaly needs extraction to confirm, `check`
+  now actually does it.** `checkStructureFile`'s "incomplete disc set"
+  finding is the one place `check` touches a DAT (`datdb.Load`) or
+  hashes a file at all - and only for a "(Disc N)"-tagged file whose
+  cheap, directory-listing-only sibling check (`buildDiscGroups`, and
+  its `Title.m3u/`-directory counterpart `m3uLoneDiscGroup` -
+  `checkM3uDiscSet`) already found has no other disc number present.
+  Everything else about `check` stays exactly as cheap as it's always
+  been: this only ever runs on the rare file/directory that's actually
+  ambiguous, never a whole system's worth. For a raw file that's still
+  cheap (`hashROM`); for an already-converted `.chd`/`.rvz`,
+  `discFileHashes` now actually extracts it (`hashDiscCHD`/
+  `hashDiscRVZ`, the exact same functions `collection --verify-chd`
+  uses) via a lazily-resolved `discToolResolver` - chdman/dolphin-tool
+  are only ever resolved, and only ever invoked, the first time an
+  ambiguous disc of that format is actually found, so a library with
+  none never needs either tool at all. This is a deliberate exception to
+  the "resolve a tool before any work starts" invariant above: `check`
+  must stay usable with neither tool installed on the common path,
+  unlike `chd`/`rvz`/`verify`, which always need their tool the moment
+  they're asked to run on a relevant system. (`.cso` has no equivalent
+  "just extract this one" path today and stays unconfirmed.) Confirmed
+  against a real library that this really can get slow per disc (a real
+  dolphin-tool extraction of a ~1GB RVZ took several seconds over a slow
+  mount) - every ambiguous disc found across every system's cheap scan
+  is collected into a `discJobCollector` first and only *then* run
+  through one shared `cliutil.Parallel` worker pool
+  (`discCompletenessJob`), rather than resolved inline as each is found:
+  without this, two ambiguous discs in the very same system would
+  confirm one after another despite each being a real extraction, not a
+  filename check - confirmed against that same real library, where
+  exactly that case went from ~31s to ~13s once parallelized.
+  `romctl discs [SYSTEM...|all]` is the dedicated, focused report for
+  exactly these findings (`commands.Discs`, reusing
+  `buildDiscGroups`/`m3uLoneDiscGroup`/`checkIncompleteDiscSet` directly,
+  with its own `discsJob`/`cliutil.Parallel` pass built the same way, not
   duplicating the scan) - `check`'s own Fixes table points its
   "Incomplete disc set" bucket there (`audit.labelDetailCommands`)
-  instead of the generic, unscoped `check -v`. Neither `check` nor
-  `discs` ever looks *inside* an already-grouped `Title.m3u/` directory
-  for this - `buildDiscGroups` only scans a system directory's top-level
-  files - so a title that's already been (wrongly) grouped with only one
-  disc present is invisible to both; `m3u` itself won't create a new one
-  like that (see its own entry below), but an existing one needs
-  `collection --verify-chd --missing` to actually confirm, the same real
-  extraction cost `check`/`discs` are built to avoid - see `collection`'s
-  own entry in "DAT snapshot status" below for how that surfaces an
-  incomplete set with no new status logic at all.
+  instead of the generic, unscoped `check -v`. `m3u` itself won't create
+  a new one-disc `Title.m3u/` directory (see its own entry below), which
+  is what made this whole check possible to extend into one in the first
+  place.
 - **`m3u` never groups a lone disc with no sibling disc number.** A
   "(Disc N)"-tagged file with nothing else sharing its title is just as
   likely to be a single-disc game whose name happens to carry a tag as a
   genuinely incomplete set, and wrapping it alone in a `Title.m3u/`
-  directory either way would be pure clutter - worse, it makes that file
-  invisible to `check`/`discs`'s own disc-completeness logic afterward
-  (see above), since neither looks inside an existing `.m3u/` directory.
-  Confirmed as a real, not theoretical, bug: an earlier `m3u` run against
-  a real library wrapped a single `.rvz` with no sibling into its own
-  one-file `Title.m3u/` directory, which turned out (via `collection
-  --verify-chd`) to genuinely be missing its second disc - a case that
-  then had no way to ever surface again until this fix.
+  directory either way would be pure clutter. Confirmed as a real, not
+  theoretical, bug: an earlier `m3u` run against a real library wrapped
+  a single `.rvz` with no sibling into its own one-file `Title.m3u/`
+  directory - at the time, that made it genuinely invisible to `check`/
+  `discs` (neither looked inside an existing `.m3u/` directory yet), so
+  the only way to ever find out it was actually missing its second disc
+  was `collection --verify-chd --missing`. `check`/`discs` now cover this
+  case directly (see above), but `m3u` still refuses to create a new one
+  like it going forward regardless - there was never a good reason to.
 - **`check`'s Fixes table names whether romctl can actually fix a given
   issue itself.** The `Auto-Fix` column is `yes` only for a row backed by
   a real romctl command (`knownFixes`, e.g. `m3u`/`chd`/`rename`); every

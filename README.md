@@ -212,7 +212,7 @@ falls back to disk when it isn't safe to use.
 | Command | Action |
 |---|---|
 | `check` | Audit systems and BIOS files (naming, structure, containers, BIOS). Read-only. Exits 1 if anything is `FAIL`. `-v`/`--verbose` prints every finding instead of the Checks/Fixes tables. The Fixes table's `Auto-Fix` column says whether romctl itself can resolve a row (`yes`) or it needs you to acquire something (`no`, always, for a missing BIOS or an incomplete disc set - see [Out of scope](#out-of-scope)) - either way, `Fix` still names a command or instruction. See [Output format](#output-format) for `--format`. |
-| `discs` | List every confirmed-incomplete multi-disc set (read-only) - the dedicated, fast detail view `check`'s own "Incomplete disc set" row points at, instead of the whole, unscoped `check -v`. See [Library conventions](#library-conventions). |
+| `discs` | List every confirmed-incomplete multi-disc set (read-only) - the dedicated detail view `check`'s own "Incomplete disc set" row points at, instead of the whole, unscoped `check -v`. May need to extract a `.chd`/`.rvz` for real to confirm one (same cost `collection --verify-chd` pays), but only ever for the rare ambiguous disc, never a whole library. See [Library conventions](#library-conventions). |
 | `bios` | Audit BIOS files only. `-v`/`--verbose` prints the full inventory (every known file, not just problems) instead. See [BIOS and firmware](#bios-and-firmware). |
 | `dupes` | Scan for exact (byte-for-byte) duplicate files. Read-only, its own command rather than a `check` flag - see below for why. |
 | `verify` | Verify every CHD's data against its own checksums, via chdman. Read-only, its own command rather than a `check` flag - see below for why. |
@@ -424,10 +424,11 @@ row per disc, not one entry with several ROMs), `--verify-chd` together
 with `--missing` surfaces an incomplete multi-disc set for free, with no
 extra flag or status needed: if disc 1 of a two-disc game hashes correctly
 but disc 2 is nowhere in the library, disc 1's row reads `have` and disc
-2's reads `missing` - including for a disc that's sitting inside a
-`Title.m3u/` directory with no sibling at all, which `check`/`discs`
-can't see into (see [Library conventions](#library-conventions)) without
-the extraction `--verify-chd` already pays for.
+2's reads `missing`. `check`/`discs` catch the same case directly too (see
+[Library conventions](#library-conventions)), including for a disc
+sitting alone inside a `Title.m3u/` directory - this is one of the few
+places either of them extracts a `.chd`/`.rvz` for real rather than
+staying filename-only.
 
 For `fbneo`, a clone set's zip routinely omits ROMs that are shared with
 its parent set (most FBNeo games declare a parent this way). `collection`
@@ -587,26 +588,24 @@ roms/psx/Final Fantasy VII.m3u/
 The playlist lists one disc filename per line, relative to the directory.
 Disc numbers are zero-padded so they sort correctly.
 
-A loose `Title (Disc N).ext` file with no sibling disc number present is
-ambiguous on filename alone: it could be mid-grouping, or it could be a
-single-disc game whose name just happens to carry a `(Disc 1)` tag. `check`
-confirms which one by hashing that one file and checking it against the
-embedded DAT - if the DAT shows the game genuinely has more discs than this
-one, it's reported as an **incomplete disc set** (acquire the rest, or delete
-what you have) instead of the usual "belongs in a `.m3u` directory" `fix: m3u`
-suggestion, which wouldn't actually fix anything here. `romctl discs` lists
-every confirmed-incomplete set directly, without re-running `check`'s other
-categories just to find these lines. `m3u` itself follows the same rule in
-reverse: it never groups a lone disc with no sibling into a one-file
-`Title.m3u/` directory, since that's equally likely to be a single-disc
-game as a genuinely incomplete one, and either way it would make the file
-invisible to the checks above - neither `check` nor `discs` looks inside
-an already-grouped `Title.m3u/` directory at all. For a title that's
-*already* grouped with only one disc present (from before this fix, or
-any other way it happened), [`collection --verify-chd`](#collection-havemissing-against-a-dat)
-is the way to actually confirm it: it extracts CHD/RVZ content for real,
-and with `--missing` added, an incomplete set shows up there as one
-disc `have` and the other `missing` - no separate flag or status needed.
+A lone `Title (Disc N).ext` file with no sibling disc number present - loose,
+or already grouped alone inside a `Title.m3u/` directory - is ambiguous on
+filename alone: it could be mid-grouping (or wrongly grouped already), or it
+could be a single-disc game whose name just happens to carry a `(Disc 1)`
+tag. `check` confirms which one by hashing that one disc and checking it
+against the embedded DAT - extracting it first via `chdman`/`dolphin-tool`
+if it's already a `.chd`/`.rvz` (same extraction `collection --verify-chd`
+uses, only ever run on this one rare, ambiguous disc, never a whole
+library). If the DAT shows the game genuinely has more discs than this one,
+it's reported as an **incomplete disc set** (acquire the rest, or delete
+what you have) instead of the usual "belongs in a `.m3u` directory"
+`fix: m3u` suggestion, which wouldn't actually fix anything here.
+`romctl discs` lists every confirmed-incomplete set directly, without
+re-running `check`'s other categories just to find these lines. `m3u`
+itself follows the same rule in reverse: it never groups a lone disc with
+no sibling into a one-file `Title.m3u/` directory in the first place, since
+that's equally likely to be a single-disc game as a genuinely incomplete
+one, and either way it would make the file harder to re-examine later.
 
 ### Naming
 
