@@ -41,3 +41,16 @@ func TestRVZRefusesMisfiledCartridgeROM(t *testing.T) {
 		t.Error("an RVZ should never have been produced from the misfiled ROM")
 	}
 }
+
+func TestRVZOutputPathStripsNKitInfix(t *testing.T) {
+	cases := map[string]string{
+		"/roms/gc/Title (Disc 1).nkit.iso": "/roms/gc/Title (Disc 1).rvz",
+		"/roms/gc/Title (Disc 1).iso":      "/roms/gc/Title (Disc 1).rvz",
+		"/roms/wii/Title.NKit.iso":         "/roms/wii/Title.rvz",
+	}
+	for in, want := range cases {
+		if got := rvzOutputPath(in); got != want {
+			t.Errorf("rvzOutputPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

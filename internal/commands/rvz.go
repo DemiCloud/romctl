@@ -81,7 +81,7 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		cliutil.Parallel(jobs, func(j rvzJob) {
 			defer tick()
 			path := filepath.Join(lib.Roms, j.sys, j.base)
-			out := strings.TrimSuffix(path, filepath.Ext(path)) + ".rvz"
+			out := rvzOutputPath(path)
 			if exists(out) {
 				return
 			}
@@ -119,6 +119,22 @@ func RVZ(lib *library.Library, runner *actions.Runner, systems []string) (bool, 
 		fmt.Print(line)
 	}
 	return failed.Load() == 0, nil
+}
+
+// rvzOutputPath strips path's image extension and, if present, a trailing
+// ".nkit" infix (an NKit-shrunk source, e.g. "Title.nkit.iso") before
+// appending ".rvz" - otherwise the naive TrimSuffix(path, Ext(path)) only
+// strips the real extension, leaving "Title.nkit.rvz": a name m3u's own
+// discFileRE (and any other "(Disc N).rvz" matcher) doesn't recognize.
+// dolphin-tool's own RVZ container still carries the source's NKit-shrunk
+// data either way (confirmed via its own "output will still be NKit"
+// conversion warning) - this only fixes the filename, not that property.
+func rvzOutputPath(path string) string {
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	if ext := filepath.Ext(base); strings.EqualFold(ext, ".nkit") {
+		base = strings.TrimSuffix(base, ext)
+	}
+	return base + ".rvz"
 }
 
 func convertToRVZ(in, out string) error {
