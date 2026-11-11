@@ -47,28 +47,86 @@ func cullWorthy(message string) bool {
 	return false
 }
 
-// discClassKnownExts is, for each disc-based system class Cull's
-// unmanaged-format sweep covers, the complete set of extensions
-// checkContainerFile already recognizes for it (every key sharing that
-// class in its own switch - see check.go) plus whichever "already
-// final, nothing left to check" format has no case there for exactly
-// that reason (Dolphin's own .rvz - unlike .chd, .xiso and PS3's own
-// .iso, there's no checkRVZ validation at all yet, so .rvz never
-// appears as a switch key). Anything else found in one of these
-// classes' directories is a format Cull has never seen before - not
-// necessarily broken (it might just work as-is, like a .PBP a libretro
-// PS1 core can often load directly without any conversion), but worth
-// surfacing rather than staying silent about. Cartridge-shaped classes
-// (cart/n64/snes/arcade) have no equivalent closed set of extensions -
-// every ordinary ROM there would look "unrecognized" by this same
-// test, so they're deliberately not covered at all.
-var discClassKnownExts = map[systemdb.Class]map[string]bool{
-	systemdb.ClassCD:      extSet("cue", "gdi", "iso", "bin", "img", "ccd", "mds", "toc", "zip", "7z", "rar", "chd"),
-	systemdb.ClassDVD:     extSet("iso", "cue", "zip", "7z", "rar", "chd"),
-	systemdb.ClassUMD:     extSet("iso", "cso", "chd"),
-	systemdb.ClassDolphin: extSet("iso", "gcm", "wbfs", "ciso", "gcz", "rvz"),
-	systemdb.ClassXbox:    extSet("iso", "xiso"),
-	systemdb.ClassPS3:     extSet("iso", "7z", "zip", "rar"),
+// knownFormatsPerSystem is, for a romctl system directory name Cull has
+// directly verified against RetroDECK's own per-emulator "what file
+// formats are supported" documentation
+// (https://retrodeck.readthedocs.io/en/latest/wiki_emulator_guides/
+// <emulator>/<emulator>-guide/ - the full list of 32 such pages, confirmed
+// 2026-11-11 against the site's own sitemap.xml), the complete set of
+// extensions that system's real emulator actually plays - not romctl's
+// own guess at what it can convert. Replacing the guess with the real
+// list caught two confirmed false positives against a real library:
+// Duckstation (psx's documented emulator) lists .pbp as directly
+// supported, and Flycast (dreamcast) lists .cdi the same way - neither
+// should ever have been flagged as "unmanaged" at all. Each entry below
+// also unions in whatever archive extension(s) checkContainerFile's own
+// switch already treats as a known, needs-conversion case for that
+// system's class (cd: zip/7z/rar, dvd: zip/7z/rar) - not because the
+// emulator plays them directly, but so this sweep doesn't flag a file
+// check already has its own, more specific "convert to CHD" finding for.
+//
+// RPCS3 (ps3) is deliberately not listed here despite having its own
+// guide page: that page documents ES-DE's own launcher convention for
+// PS3 (.desktop shortcuts, or a folder renamed .ps3/.ps3dir) - not which
+// raw disc formats RPCS3 itself can read - so it isn't the same kind of
+// "supported formats" data the other pages give, and ps3 keeps its
+// entry in classKnownExts (which does already include .iso correctly)
+// instead.
+var knownFormatsPerSystem = map[string]map[string]bool{
+	// Duckstation - confirmed 2026-11-11 against
+	// wiki_emulator_guides/duckstation/duckstation-guide/.
+	"psx": extSet("bin", "cue", "img", "iso", "chd", "mds", "pbp", "ecm", "zip", "7z", "rar"),
+
+	// Flycast - confirmed 2026-11-11 against
+	// wiki_emulator_guides/flycast/flycast-guide/.
+	"dreamcast": extSet("cdi", "chd", "cue", "dat", "elf", "gdi", "iso", "lst", "m3u", "7z", "zip", "rar"),
+
+	// Dolphin - confirmed 2026-11-11 against
+	// wiki_emulator_guides/dolphin/dolphin-guide/. Already includes 7z/
+	// zip natively (Dolphin plays a compressed disc image directly;
+	// checkContainerFile has no dolphin:zip/7z case of its own at all,
+	// so this is new recognition, not a union with an existing one).
+	"gc":  extSet("ciso", "dff", "dol", "elf", "gcm", "gcz", "iso", "json", "m3u", "rvz", "tgc", "wad", "wbfs", "wia", "7z", "zip"),
+	"wii": extSet("ciso", "dff", "dol", "elf", "gcm", "gcz", "iso", "json", "m3u", "rvz", "tgc", "wad", "wbfs", "wia", "7z", "zip"),
+
+	// PCSX2 - confirmed 2026-11-11 against
+	// wiki_emulator_guides/pcsx2/pcsx2-guide/.
+	"ps2": extSet("iso", "bin", "cue", "chd", "zip", "7z", "rar"),
+
+	// PPSSPP - confirmed 2026-11-11 against
+	// wiki_emulator_guides/ppsspp/ppsspp-guide/. No zip/7z/rar listed,
+	// and checkContainerFile has no umd:zip/7z/rar case either - a
+	// stray archive here really would be unexpected.
+	"psp": extSet("elf", "cso", "iso", "pbp", "prx", "chd"),
+
+	// XEMU - confirmed 2026-11-11 against
+	// wiki_emulator_guides/xemu/xemu-guide/: only a plain .iso
+	// (internally XISO-formatted) is documented. "xiso" is kept too
+	// since romctl's own pipeline already treats it as an equivalent
+	// output extension (see xiso.go), not because the guide names it.
+	"xbox": extSet("iso", "xiso"),
+}
+
+// classKnownExts is the fallback for a disc-based system with no entry
+// in knownFormatsPerSystem yet - every other ClassCD system (saturn,
+// segacd, pcenginecd, 3do, neogeocd, pcfx, amigacd32, cdtv, cdimono1,
+// atarijaguarcd, tg-cd, and their regional variants) runs through a
+// RetroArch core rather than a standalone emulator, and RetroDECK's
+// wiki has no dedicated per-core "what formats are supported" page the
+// way it does for the 32 standalone emulators above - so this is still
+// the original guess (what checkContainerFile itself already
+// recognizes for the class, not a verified emulator capability list),
+// pending the same kind of real verification the entries above got.
+// ps3 is here rather than in knownFormatsPerSystem for the same reason -
+// see that var's own doc comment. Cartridge-shaped classes (cart/n64/
+// snes/arcade) have no equivalent closed set of extensions at all -
+// every ordinary ROM there would look "unrecognized" by this same test -
+// so they're deliberately not covered at all, by either map.
+var classKnownExts = map[systemdb.Class]map[string]bool{
+	systemdb.ClassCD:  extSet("cue", "gdi", "iso", "bin", "img", "ccd", "mds", "toc", "zip", "7z", "rar", "chd"),
+	systemdb.ClassDVD: extSet("iso", "cue", "zip", "7z", "rar", "chd"),
+	systemdb.ClassUMD: extSet("iso", "cso", "chd"),
+	systemdb.ClassPS3: extSet("iso", "7z", "zip", "rar"),
 }
 
 func extSet(exts ...string) map[string]bool {
@@ -195,10 +253,12 @@ func Cull(lib *library.Library, runner *actions.Runner, systems []string) (bool,
 // convention, not an unrecognized format) for an extension
 // discClassKnownExts doesn't list for sys's class.
 func unmanagedFormatsFor(lib *library.Library, sys string) []cullFlag {
-	class := systemdb.ClassOf(sys)
-	known, ok := discClassKnownExts[class]
+	known, ok := knownFormatsPerSystem[sys]
 	if !ok {
-		return nil
+		known, ok = classKnownExts[systemdb.ClassOf(sys)]
+		if !ok {
+			return nil
+		}
 	}
 	sysDir := filepath.Join(lib.Roms, sys)
 	entries, err := os.ReadDir(sysDir)

@@ -10,7 +10,7 @@ import (
 	"github.com/demicloud/romctl/internal/library"
 )
 
-func scrapLibrary(t *testing.T, sys string) *library.Library {
+func cullLibrary(t *testing.T, sys string) *library.Library {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "roms", sys), 0o755); err != nil {
@@ -19,8 +19,8 @@ func scrapLibrary(t *testing.T, sys string) *library.Library {
 	return library.Open(root)
 }
 
-func TestScrapRetiresLeftoverExtractionDir(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullRetiresLeftoverExtractionDir(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	leftover := filepath.Join(lib.Roms, "psx", "_extract.abc123")
 	if err := os.MkdirAll(leftover, 0o755); err != nil {
 		t.Fatal(err)
@@ -38,8 +38,8 @@ func TestScrapRetiresLeftoverExtractionDir(t *testing.T) {
 	}
 }
 
-func TestScrapRetiresIncompleteTransferLeftover(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullRetiresIncompleteTransferLeftover(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	leftover := filepath.Join(lib.Roms, "psx", "Game.chd.tmp.xyz")
 	if err := os.WriteFile(leftover, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -54,8 +54,8 @@ func TestScrapRetiresIncompleteTransferLeftover(t *testing.T) {
 	}
 }
 
-func TestScrapRetiresCueLessBin(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullRetiresCueLessBin(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	bin := filepath.Join(lib.Roms, "psx", "Lone Game (USA).bin")
 	if err := os.WriteFile(bin, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestScrapRetiresCueLessBin(t *testing.T) {
 	}
 }
 
-func TestScrapRetiresCorruptCHD(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullRetiresCorruptCHD(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	chd := filepath.Join(lib.Roms, "psx", "Broken Game.chd")
 	if err := os.WriteFile(chd, []byte("not a chd at all"), 0o644); err != nil {
 		t.Fatal(err)
@@ -89,12 +89,12 @@ func TestScrapRetiresCorruptCHD(t *testing.T) {
 	}
 }
 
-// TestScrapLeavesPairedBinAlone guards against a false positive: a .bin
+// TestCullLeavesPairedBinAlone guards against a false positive: a .bin
 // with a real matching .cue (even one referencing it by a different
 // filename, same as check's own loadCueReferences) must never be
 // retired - it's chd's job to convert it, not cull's to discard it.
-func TestScrapLeavesPairedBinAlone(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullLeavesPairedBinAlone(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	psxDir := filepath.Join(lib.Roms, "psx")
 	bin := filepath.Join(psxDir, "Paired Game.bin")
 	if err := os.WriteFile(bin, []byte("x"), 0o644); err != nil {
@@ -114,8 +114,8 @@ func TestScrapLeavesPairedBinAlone(t *testing.T) {
 	}
 }
 
-func TestScrapDryRunLeavesEverythingInPlace(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullDryRunLeavesEverythingInPlace(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	bin := filepath.Join(lib.Roms, "psx", "Lone Game (USA).bin")
 	if err := os.WriteFile(bin, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -130,13 +130,13 @@ func TestScrapDryRunLeavesEverythingInPlace(t *testing.T) {
 	}
 }
 
-// TestScrapFlagsRatherThanRetiresNestedM3UDisc guards a deliberate
+// TestCullFlagsRatherThanRetiresNestedM3UDisc guards a deliberate
 // scope limit: a disc already grouped inside a Title.m3u/ directory is
 // never auto-retired even when it matches a cull-worthy finding,
 // since removing just one disc would leave the playlist referencing a
 // file that's gone - reported for manual review instead.
-func TestScrapFlagsRatherThanRetiresNestedM3UDisc(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
+func TestCullFlagsRatherThanRetiresNestedM3UDisc(t *testing.T) {
+	lib := cullLibrary(t, "psx")
 	m3uDir := filepath.Join(lib.Roms, "psx", "Game.m3u")
 	if err := os.MkdirAll(m3uDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -168,10 +168,13 @@ func TestScrapFlagsRatherThanRetiresNestedM3UDisc(t *testing.T) {
 	}
 }
 
-func TestScrapFlagsUnmanagedFormatForDiscBasedSystem(t *testing.T) {
-	lib := scrapLibrary(t, "psx")
-	pbp := filepath.Join(lib.Roms, "psx", "Some Game.PBP")
-	if err := os.WriteFile(pbp, []byte("x"), 0o644); err != nil {
+func TestCullFlagsUnmanagedFormatForDiscBasedSystem(t *testing.T) {
+	lib := cullLibrary(t, "psx")
+	// .nrg (Nero disc image) is not in Duckstation's own documented
+	// supported-format list - unlike .PBP, which is (see
+	// TestCullDoesNotFlagVerifiedRealFormats below).
+	nrg := filepath.Join(lib.Roms, "psx", "Some Game.nrg")
+	if err := os.WriteFile(nrg, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,16 +184,48 @@ func TestScrapFlagsUnmanagedFormatForDiscBasedSystem(t *testing.T) {
 			t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
 		}
 	})
-	if !exists(pbp) {
+	if !exists(nrg) {
 		t.Error("an unmanaged format should never be retired, only flagged")
 	}
-	if !strings.Contains(out, "Some Game.PBP") || !strings.Contains(out, "unrecognized format") {
-		t.Errorf("expected the .PBP file to be flagged as an unmanaged format, got:\n%s", out)
+	if !strings.Contains(out, "Some Game.nrg") || !strings.Contains(out, "unrecognized format") {
+		t.Errorf("expected the .nrg file to be flagged as an unmanaged format, got:\n%s", out)
 	}
 }
 
-func TestScrapDoesNotFlagCartridgeExtensionsAsUnmanaged(t *testing.T) {
-	lib := scrapLibrary(t, "snes")
+// TestCullDoesNotFlagVerifiedRealFormats guards the real fix this
+// session: .PBP (psx) and .cdi (dreamcast) are both directly supported
+// by the actual emulator RetroDECK documents for each system
+// (Duckstation, Flycast) - confirmed against RetroDECK's own
+// wiki_emulator_guides pages, not romctl's own guess at what it can
+// convert - so neither should ever be flagged as "unmanaged" at all.
+func TestCullDoesNotFlagVerifiedRealFormats(t *testing.T) {
+	lib := cullLibrary(t, "psx")
+	pbp := filepath.Join(lib.Roms, "psx", "Some Game.PBP")
+	if err := os.WriteFile(pbp, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dreamDir := filepath.Join(lib.Root, "roms", "dreamcast")
+	if err := os.MkdirAll(dreamDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cdi := filepath.Join(dreamDir, "Some Game.cdi")
+	if err := os.WriteFile(cdi, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		ok, err := Cull(lib, &actions.Runner{}, []string{"psx", "dreamcast"})
+		if err != nil || !ok {
+			t.Fatalf("Cull() = (%v, %v), want (true, nil)", ok, err)
+		}
+	})
+	if strings.Contains(out, "Flagged") {
+		t.Errorf(".PBP (psx) and .cdi (dreamcast) are both verified-supported formats, should never be flagged, got:\n%s", out)
+	}
+}
+
+func TestCullDoesNotFlagCartridgeExtensionsAsUnmanaged(t *testing.T) {
+	lib := cullLibrary(t, "snes")
 	rom := filepath.Join(lib.Roms, "snes", "Some Game.sfc")
 	if err := os.WriteFile(rom, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

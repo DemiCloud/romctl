@@ -183,16 +183,33 @@ Key `internal/` packages:
   already its own plain `check` finding), a PS3 installed/PSN-style
   folder (may run fine as-is), and an incomplete disc set (the present
   disc is itself confirmed good - see `discs`). Separately,
-  `discClassKnownExts` lists, per disc-based class (cd/dvd/umd/dolphin/
-  xbox/ps3 - cartridge-shaped classes have no equivalent closed
-  extension set, so they're not covered at all), every extension
-  `checkContainerFile` already recognizes; anything else found there -
-  confirmed against a real library: `.PBP` (PS1-on-PSP packaging) under
-  `psx/`, `.cdi` (DiscJuggler) under `dreamcast/` - is only ever
-  *reported*, never retired: romctl has no conversion/recognition path
-  for either, but both routinely play fine as-is in the right emulator
-  core without ever being converted, so there's no evidence they're
-  actually broken. A disc already grouped inside a `Title.m3u/`
+  `knownFormatsPerSystem` lists, per romctl system directory name Cull
+  has directly verified against RetroDECK's own per-emulator "what file
+  formats are supported" docs (the 32
+  `wiki_emulator_guides/<emulator>/<emulator>-guide/` pages, confirmed
+  2026-11-11 against the site's own `sitemap.xml`), every extension that
+  system's real emulator actually plays - not romctl's own guess at what
+  it can convert. This replaced an earlier guess derived purely from
+  `checkContainerFile`'s own switch (what romctl itself recognizes, not
+  what the target emulator supports), which produced two confirmed false
+  positives against a real library: Duckstation (psx's documented
+  emulator) lists `.PBP` as directly supported, and Flycast (dreamcast)
+  lists `.cdi` the same way - neither should ever have been flagged as
+  unmanaged at all, and once verified, neither is. `classKnownExts` is
+  the fallback for every disc-based system with no verified entry yet -
+  every other `ClassCD` system (saturn, segacd, pcenginecd, 3do,
+  neogeocd, pcfx, amigacd32, cdtv, cdimono1, atarijaguarcd, tg-cd, and
+  their regional variants) runs through a RetroArch core rather than a
+  standalone emulator, and RetroDECK's wiki has no dedicated per-core
+  page the way it does for the 32 standalone emulators - so those still
+  use the original guess, pending the same verification. `ps3` is in
+  `classKnownExts` too despite RPCS3 having its own guide page: that
+  page documents ES-DE's own launcher convention (`.desktop` shortcuts,
+  or a folder renamed `.ps3`/`.ps3dir`), not which raw disc formats
+  RPCS3 itself reads, so it isn't the same kind of data the other 31
+  pages give. Cartridge-shaped classes (cart/n64/snes/arcade) have no
+  equivalent closed extension set at all, so they're not covered by
+  either map. A disc already grouped inside a `Title.m3u/`
   directory is reported the same way even when it matches a
   cull-worthy message, rather than retired: removing just one disc
   would leave the playlist referencing a file that's gone, and this
